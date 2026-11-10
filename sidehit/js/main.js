@@ -1,6 +1,6 @@
 // Sidehit — app shell: rendering, modes (menu / ride / edit), camera, HUD, input.
 import * as THREE from '../vendor/three.module.min.js';
-import { Terrain } from './terrain.js';
+import { Terrain, sparkle } from './terrain.js';
 import { Player, airTricks } from './player.js';
 import { Rider } from './rider.js';
 import { Sound } from './audio.js';
@@ -85,9 +85,9 @@ function tintRange(mesh, top, bottom) {
 }
 
 const SKY = {
-  bluebird: { zenith: 0x1f66cc, haze: 0xc4dcf2, sun: 0xffe9cf, power: 3.1, hemiSky: 0xa9cdfc, hemiGround: 0xf4f8ff, hemi: 1.5, dir: [-0.55, 0.42, 0.62], exposure: 1.4 },
-  golden: { zenith: 0x4a6cb5, haze: 0xf3c9a8, sun: 0xffa868, power: 3.6, hemiSky: 0x9fb2e8, hemiGround: 0xffe2d0, hemi: 1.2, dir: [-0.78, 0.2, 0.55], exposure: 1.3 },
-  dusk: { zenith: 0x0c1a48, haze: 0x5a6aa6, sun: 0xb4c8ff, power: 1.7, hemiSky: 0x5068b8, hemiGround: 0x93a4d8, hemi: 1.15, dir: [0.45, 0.5, 0.45], exposure: 1.2 },
+  bluebird: { glint: 1, zenith: 0x1f66cc, haze: 0xc4dcf2, sun: 0xffe9cf, power: 3.1, hemiSky: 0xa9cdfc, hemiGround: 0xf4f8ff, hemi: 1.5, dir: [-0.55, 0.42, 0.62], exposure: 1.4 },
+  golden: { glint: 0.8, zenith: 0x4a6cb5, haze: 0xf3c9a8, sun: 0xffa868, power: 3.6, hemiSky: 0x9fb2e8, hemiGround: 0xffe2d0, hemi: 1.2, dir: [-0.78, 0.2, 0.55], exposure: 1.3 },
+  dusk: { glint: 0.25, zenith: 0x0c1a48, haze: 0x5a6aa6, sun: 0xb4c8ff, power: 1.7, hemiSky: 0x5068b8, hemiGround: 0x93a4d8, hemi: 1.15, dir: [0.45, 0.5, 0.45], exposure: 1.2 },
 };
 function applySky(name) {
   const s = SKY[name] || SKY.bluebird, haze = new THREE.Color(s.haze), white = new THREE.Color(0xffffff);
@@ -102,6 +102,7 @@ function applySky(name) {
   hemi.groundColor.set(s.hemiGround);
   hemi.intensity = s.hemi;
   renderer.toneMappingExposure = s.exposure;
+  sparkle.value = s.glint;
   const z = new THREE.Color(s.zenith);
   tintRange(ranges[0], haze.clone().lerp(white, 0.6), haze.clone().lerp(z, 0.25));
   tintRange(ranges[1], haze.clone().lerp(white, 0.3), haze.clone().lerp(z, 0.4));
@@ -133,34 +134,44 @@ function puff(p, vx, vy, vz, spread) {
   spray.life[i] = 0.5 + Math.random() * 0.5;
 }
 
-// track left in the snow
-const TRAIL = 300;
-const trail = { pos: new Float32Array(TRAIL * 6), col: new Float32Array(TRAIL * 8), on: new Uint8Array(TRAIL), last: new THREE.Vector3(1e9, 0, 0) };
+// The trench the board cuts: bright walls sloping into a shadowed floor.
+const TRAIL = 640, ACROSS = 4;
+const trail = { pos: new Float32Array(TRAIL * ACROSS * 3), col: new Float32Array(TRAIL * ACROSS * 4), on: new Float32Array(TRAIL), last: new THREE.Vector3(1e9, 0, 0) };
 {
   const geo = new THREE.BufferGeometry(), idx = [];
-  for (let i = 0; i < TRAIL - 1; i++) idx.push(i * 2, i * 2 + 1, i * 2 + 2, i * 2 + 2, i * 2 + 1, i * 2 + 3);
+  for (let i = 0; i < TRAIL - 1; i++) for (let k = 0; k < ACROSS - 1; k++) {
+    const a = i * ACROSS + k, b = a + 1, c = a + ACROSS, d = c + 1;
+    idx.push(a, b, c, c, b, d);
+  }
   geo.setAttribute('position', new THREE.BufferAttribute(trail.pos, 3));
   geo.setAttribute('color', new THREE.BufferAttribute(trail.col, 4));
   geo.setIndex(idx);
-  trail.mesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }));
+  trail.mesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, depthWrite: false, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }));
   trail.mesh.frustumCulled = false;
   scene.add(trail.mesh);
 }
-function trailPush(p, side, up, on, deep) {
-  trail.pos.copyWithin(0, 6);
+// depth 0..1: how hard the board is biting (0 = lifted off the snow)
+function trailPush(p, side, up, depth, deep) {
+  const stride = ACROSS * 3;
+  trail.pos.copyWithin(0, stride);
   trail.on.copyWithin(0, 1);
-  const k = (TRAIL - 1) * 6;
-  for (let s = 0; s < 2; s++) {
-    const w = (s ? 1 : -1) * (deep ? 0.34 : 0.15);
-    trail.pos[k + s * 3] = p.x + side.x * w + up.x * 0.07;
-    trail.pos[k + s * 3 + 1] = p.y + side.y * w + up.y * 0.07;
-    trail.pos[k + s * 3 + 2] = p.z + side.z * w + up.z * 0.07;
+  const k = (TRAIL - 1) * stride, half = (deep ? 0.36 : 0.16) * (1 + 0.5 * depth);
+  for (let s = 0; s < ACROSS; s++) {
+    // outer edges sit on the surface, the inner pair a touch lower to catch the eye as a groove
+    const outer = s === 0 || s === ACROSS - 1, w = (s < 2 ? -1 : 1) * half * (outer ? 1 : 0.55), lift = outer ? 0.08 : 0.045;
+    trail.pos[k + s * 3] = p.x + side.x * w + up.x * lift;
+    trail.pos[k + s * 3 + 1] = p.y + side.y * w + up.y * lift;
+    trail.pos[k + s * 3 + 2] = p.z + side.z * w + up.z * lift;
   }
-  trail.on[TRAIL - 1] = on ? 1 : 0;
+  trail.on[TRAIL - 1] = depth > 0 ? 0.45 + 0.35 * depth + (deep ? 0.15 : 0) : 0;
   for (let i = 0; i < TRAIL; i++) {
-    // a segment is drawn only if both of its ends touched the snow
-    const a = trail.on[i] && (i === 0 || trail.on[i - 1]) && (i === TRAIL - 1 || trail.on[i + 1]) ? (deep ? 0.6 : 0.4) * Math.min(i / 40, 1) : 0;
-    for (let s = 0; s < 2; s++) trail.col.set([0.55, 0.66, 0.86, a], i * 8 + s * 4);
+    // a slice is drawn only if its neighbours touched the snow too
+    const joined = trail.on[i] && (i === 0 || trail.on[i - 1]) && (i === TRAIL - 1 || trail.on[i + 1]);
+    const a = joined ? trail.on[i] * Math.min(i / 60, 1) : 0;
+    for (let s = 0; s < ACROSS; s++) {
+      const outer = s === 0 || s === ACROSS - 1;
+      trail.col.set(outer ? [1, 1, 1, a * 0.5] : [0.43, 0.56, 0.82, a], (i * ACROSS + s) * 4);
+    }
   }
   trail.mesh.geometry.attributes.position.needsUpdate = true;
   trail.mesh.geometry.attributes.color.needsUpdate = true;
@@ -492,7 +503,7 @@ function updateRider(dt) {
   }
   if (trail.last.distanceToSquared(p.pos) > 0.16) {
     trail.last.copy(p.pos);
-    trailPush(p.pos, bx, up, onSnow, p.powder);
+    trailPush(p.pos, bx, up, onSnow ? 0.25 + 0.75 * p.carve : 0, p.powder);
   }
 }
 

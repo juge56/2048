@@ -238,7 +238,7 @@ export class Player {
     this.carve = clamp(Math.abs(vs) * (loose ? 0.05 : 0.25) + Math.abs(this.yawRate * vf) * 0.03 + (this.braking ? Math.abs(vf) * 0.08 : 0), 0, 1);
     // on its edge the board holds: sideways slip bleeds off fast, forward glide barely at all
     vs *= Math.exp(-(loose ? 0.4 : this.braking ? 3 : this.powder ? 5 : 9) * dt);
-    const dec = ((this.powder ? 0.0085 : this.tuck ? 0.0024 : 0.0042) * vf * vf + 0.035 * G * n.y + (loose ? 0 : Math.abs(this.yawRate * vf) * 0.06) + (this.braking ? 7 : 0)
+    const dec = ((this.powder ? 0.0066 : this.tuck ? 0.0032 : 0.0044) * vf * vf + 0.035 * G * n.y + (loose ? 0 : Math.abs(this.yawRate * vf) * 0.06) + (this.braking ? 7 : 0)
       // deep snow drags when you're slow and lets go as you plane on top of it
       + (this.powder ? 0.8 * Math.exp(-Math.abs(vf) / 5) : 0)) * dt;
     vf = Math.abs(vf) <= dec ? 0 : vf - Math.sign(vf) * dec;

@@ -5,7 +5,7 @@ import { centerX } from './maps.js';
 export const KICKER = [{ H: 1.2, L: 7, w: 5 }, { H: 2.2, L: 11, w: 7 }, { H: 3.4, L: 15, w: 9 }, { H: 4.8, L: 19, w: 11 }];
 export const ROLLER = [{ H: 0.8, L: 10, w: 8 }, { H: 1.5, L: 16, w: 10 }, { H: 2.4, L: 24, w: 14 }];
 // Tabletop jumps: curved take-off (T), flat deck (D), sloped landing (R).
-export const JUMP = [{ H: 2.2, T: 8, D: 6, R: 14, w: 9 }, { H: 3.4, T: 11, D: 9, R: 20, w: 11 }, { H: 4.8, T: 14, D: 13, R: 28, w: 13 }];
+export const JUMP = [{ H: 2.0, T: 9, D: 6, R: 15, w: 9 }, { H: 3.0, T: 13, D: 9, R: 21, w: 11 }, { H: 4.2, T: 18, D: 13, R: 28, w: 13 }];
 const SIDE = 130, CELL = 8, F = 5;   // F: numbers stored per forest tree
 const UP = new THREE.Vector3(0, 1, 0);
 const RAIL_COLOURS = [0xffc928, 0xff3d7f, 0xff7a1a, 0x22c7e8, 0x8be04e];
@@ -57,6 +57,29 @@ function treeGeometry(profile) {
   return g;
 }
 
+// Sun glints: tiny crystals that flash as the camera moves past them.
+export const sparkle = { value: 1 };
+function addSparkle(material) {
+  material.onBeforeCompile = (shader) => {
+    shader.uniforms.uSparkle = sparkle;
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vSnowPos;')
+      .replace('#include <project_vertex>', '#include <project_vertex>\nvSnowPos = (modelMatrix * vec4(transformed, 1.0)).xyz;');
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', `#include <common>
+        varying vec3 vSnowPos; uniform float uSparkle;
+        float snowHash(vec3 p) { p = fract(p * 0.3183099 + 0.1); p *= 17.0; return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }`)
+      .replace('#include <opaque_fragment>', `
+        vec3 toEye = cameraPosition - vSnowPos;
+        float dist = length(toEye);
+        vec3 cell = floor(vec3(vSnowPos.xz * 26.0, 0.0)) + floor(vec3(normalize(toEye).xz * 34.0, 1.0)).xzy;
+        float glint = step(0.9935, snowHash(cell)) * smoothstep(34.0, 3.0, dist) * uSparkle;
+        outgoingLight += vec3(1.0, 0.97, 0.9) * glint * 1.6;
+        #include <opaque_fragment>`);
+  };
+  return material;
+}
+
 let shared = null;
 function sharedAssets() {
   if (shared) return shared;
@@ -75,8 +98,8 @@ function sharedAssets() {
   tex.anisotropy = 8;
   const lam = (color, extra) => new THREE.MeshLambertMaterial({ color, ...extra });
   shared = {
-    snow: new THREE.MeshLambertMaterial({ vertexColors: true, map: tex, side: THREE.DoubleSide }),
-    powder: new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide }),
+    snow: addSparkle(new THREE.MeshLambertMaterial({ vertexColors: true, map: tex, side: THREE.DoubleSide })),
+    powder: addSparkle(new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide })),
     treeMat: new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide }),
     trees: [
       treeGeometry([[0.26, -0.6], [0.26, 1.0], [2.1, 1.0], [0.8, 3.0], [1.6, 3.0], [0.55, 5.0], [1.05, 5.0], [0.0, 7.0]]),
