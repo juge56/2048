@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Sidehit</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<link rel="stylesheet" href="style.css">
+</head>
+<body data-mode="menu">
+<canvas id="view"></canvas>
+
+<!-- riding -->
+<div id="hud">
+  <div class="stat left">
+    <div class="label">Score</div>
+    <div class="value" id="score">0</div>
+    <div class="sub">Best <span id="best">0</span></div>
+  </div>
+  <div class="stat right">
+    <div class="value"><span id="speed">0</span><small>km/h</small></div>
+  </div>
+  <div id="combo">
+    <div id="flash"></div>
+    <div id="tricks"></div>
+    <div id="points"></div>
+  </div>
+  <div class="bar" id="playbar">
+    <button id="b-menu">Parks</button>
+    <button id="b-edit" hidden>Editor</button>
+    <button id="b-respawn">Respawn</button>
+    <button id="b-setspawn">Set spawn</button>
+    <button id="b-mute">Sound on</button>
+  </div>
+</div>
+<div id="touch">
+  <div id="stickzone"></div>
+  <div id="pad"><div id="nub"></div></div>
+  <button id="bgrab">Grab</button>
+  <button id="bjump">Jump</button>
+</div>
+
+<!-- menu -->
+<div id="menu">
+  <div class="card">
+    <h1>Sidehit</h1>
+    <p class="tag">Ride the park. Then build your own.</p>
+    <div id="maps"></div>
+    <div class="row">
+      <button id="b-new" class="primary">+ New park</button>
+      <button id="b-import">Import</button>
+    </div>
+    <table class="keys desktop">
+      <tr><td><kbd>A</kbd> <kbd>D</kbd></td><td>Carve &middot; spin in the air</td></tr>
+      <tr><td><kbd>W</kbd> <kbd>S</kbd></td><td>Tuck / brake &middot; front / back flip in the air</td></tr>
+      <tr><td><kbd>Space</kbd></td><td>Hold to load, release to ollie (tap it for rails)</td></tr>
+      <tr><td><kbd>E</kbd> <kbd>Q</kbd></td><td>Grab (Indy / Mute)</td></tr>
+      <tr><td><kbd>R</kbd> <kbd>T</kbd></td><td>Respawn &middot; set the respawn point where you stand</td></tr>
+    </table>
+    <table class="keys mobile">
+      <tr><td>Left thumb</td><td>Drag to carve, tuck and brake &middot; spin and flip in the air</td></tr>
+      <tr><td>Jump</td><td>Hold to load, release to ollie (tap it for rails)</td></tr>
+      <tr><td>Grab</td><td>Hold in the air</td></tr>
+    </table>
+  </div>
+</div>
+
+<!-- editor -->
+<div id="editor">
+  <div class="bar" id="editbar">
+    <button id="b-emenu">Parks</button>
+    <button id="b-settings">Hill</button>
+    <button id="b-share">Share</button>
+    <button id="b-test" class="primary">Ride it</button>
+  </div>
+  <div id="settings" class="panel">
+    <label>Name <input id="m-name" maxlength="40"></label>
+    <label>Steepness <input id="m-slope" type="range" min="0.14" max="0.5" step="0.01"></label>
+    <label>Length <input id="m-length" type="range" min="250" max="1000" step="10"></label>
+    <label>Width <input id="m-width" type="range" min="80" max="240" step="10"></label>
+    <label>Rolling terrain <input id="m-bumps" type="range" min="0" max="1" step="0.05"></label>
+    <label>Light <select id="m-sky"><option value="bluebird">Bluebird</option><option value="golden">Golden hour</option><option value="dusk">Dusk</option></select></label>
+  </div>
+  <div id="bottom">
+    <div id="selpanel" class="panel">
+      <span id="selinfo"></span>
+      <button id="rotl" title="Rotate left">⟲</button>
+      <button id="rotr" title="Rotate right">⟳</button>
+      <button id="smaller" title="Smaller / shorter">−</button>
+      <button id="bigger" title="Bigger / longer">+</button>
+      <button id="lower" title="Lower">▼</button>
+      <button id="higher" title="Higher">▲</button>
+      <button id="dup">Copy</button>
+      <button id="del" class="danger">Delete</button>
+    </div>
+    <div id="tip"></div>
+    <div id="tools">
+      <button data-tool="select">Select</button>
+      <button data-tool="kicker">Kicker</button>
+      <button data-tool="roller">Roller</button>
+      <button data-tool="rail">Rail</button>
+      <button data-tool="box">Box</button>
+      <button data-tool="tree">Tree</button>
+      <button data-tool="spawn">Start</button>
+      <span id="count"></span>
+    </div>
+  </div>
+</div>
+
+<div id="dlg">
+  <div class="panel">
+    <h2 id="dlg-title"></h2>
+    <p id="dlg-help"></p>
+    <textarea id="dlg-text" spellcheck="false"></textarea>
+    <p id="dlg-err"></p>
+    <div class="row">
+      <button id="dlg-ok" class="primary"></button>
+      <button id="dlg-close">Close</button>
+    </div>
+  </div>
+</div>
+
+<script type="module" src="js/main.js"></script>
+</body>
+</html>

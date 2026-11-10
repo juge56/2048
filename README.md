@@ -3,8 +3,14 @@ A Udacity version of Gabriele Cirulli's [original 2048](http://gabrielecirulli.g
 
 The original version is a small clone of [1024](https://play.google.com/store/apps/details?id=com.veewo.a1024), based on [Saming's 2048](http://saming.fr/p/2048/) (also a clone).
 
-## Coldsmoke
-[`coldsmoke/`](coldsmoke/) is a separate game in this repo: an original 3D freeride snowboarding game with an endless procedural mountain, physics-driven carving, kickers, rails and a trick/combo score system. It is a static page with no build step. Serve the repo root (for example `python3 -m http.server`) and open `/coldsmoke/`. Keyboard and touch controls are listed on its title screen. It uses a vendored copy of [three.js](https://threejs.org/) (MIT).
+## Sidehit
+[`sidehit/`](sidehit/) is a separate, self-contained game in this repo: an original 3D terrain-park snowboarding game with a built-in park editor.
+
+- **Ride:** physics-driven carving, ollies, kickers, rollers, rails and boxes, with spins, flips, grabs and grinds feeding a combo score. Set a respawn point anywhere to session a single feature.
+- **Build:** tap to place features, drag to move them, rotate and resize them, and reshape the hill (steepness, length, width, rolling terrain, light). Parks save in the browser automatically.
+- **Share:** every park exports as a short JSON code that anyone can paste under Import.
+
+It is a static page with no build step. Serve the repo root (for example `python3 -m http.server`) and open `/sidehit/`. Keyboard and touch controls are listed on the menu. It uses a vendored copy of [three.js](https://threejs.org/) (MIT).
 
 ### Notes for the Udacity version
 We're using this version as the recommended fork to avoid potential learning issues as the original source changes (and the Udacity videos don't update). You can [fork the original repo as well](https://github.com/gabrielecirulli/2048)

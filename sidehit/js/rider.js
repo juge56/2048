@@ -1,6 +1,6 @@
 // Low-poly snowboarder built from primitives and posed procedurally.
 // Local frame: +z is the nose of the board, +y is up, the rider's chest faces -x.
-import * as THREE from './vendor/three.module.min.js';
+import * as THREE from '../vendor/three.module.min.js';
 
 const UP = new THREE.Vector3(0, 1, 0);
 const V = () => new THREE.Vector3();
