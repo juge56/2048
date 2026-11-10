@@ -263,8 +263,15 @@ function renderMenu() {
     };
     el.append(info, btn('Ride', () => ride(map), 'primary'), btn(custom ? 'Edit' : 'Remix', () => edit(map)));
     if (custom) {
-      el.append(btn('Share', () => openShare(map)), btn('✕', () => {
-        if (!confirm(`Delete "${map.name}"? This can't be undone.`)) return;
+      el.append(btn('Share', () => openShare(map)), btn('✕', (e) => {
+        // two taps to delete: the first arms the button for a few seconds
+        const b = e.currentTarget;
+        if (!b.dataset.armed) {
+          b.dataset.armed = '1';
+          b.textContent = 'Delete?';
+          setTimeout(() => { delete b.dataset.armed; b.textContent = '✕'; }, 3000);
+          return;
+        }
         app.custom.splice(app.custom.indexOf(map), 1);
         app.saved();
         if (map === app.map) setMap(BUILTIN[0]);
