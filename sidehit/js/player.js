@@ -10,8 +10,8 @@ const toAligned = (heading, yaw) => { let d = wrap(heading - yaw); if (Math.abs(
 
 // How forgiving the riding is.
 export const MODES = {
-  arcade: { assist: 6, yawSketchy: 0.6, yawBail: 1.2, flipSketchy: 0.55, flipBail: 0.95, spinBase: 6.4, spinMax: 8.2, pop0: 2.4, pop1: 4.4, tip: 0.64, kick: 0.6, strict: false },
-  sim: { assist: 1.5, yawSketchy: 0.4, yawBail: 0.9, flipSketchy: 0.4, flipBail: 0.75, spinBase: 4.6, spinMax: 8.2, pop0: 2.2, pop1: 3.6, tip: 2.6, kick: 1.6, strict: true },
+  arcade: { assist: 6, yawSketchy: 0.6, yawBail: 1.2, flipSketchy: 0.55, flipBail: 0.95, spinBase: 6.4, spinMax: 8.2, pop0: 2.4, pop1: 4.4, strict: false },
+  sim: { assist: 1.5, yawSketchy: 0.4, yawBail: 0.9, flipSketchy: 0.4, flipBail: 0.75, spinBase: 4.6, spinMax: 8.2, pop0: 2.2, pop1: 3.6, strict: true },
 };
 
 const n = new THREE.Vector3(), f0 = new THREE.Vector3(), tmp = new THREE.Vector3(), tmp2 = new THREE.Vector3();
@@ -60,7 +60,7 @@ export class Player {
       yaw: 0, yawRate: 0, spinVel: 0, flip: 0, flipVel: 0, grounded: true, charge: 0, jumpHeld: false,
       carve: 0, braking: false, tuck: false, tuckT: 0, wind: 0, sw: false,
       press: 0, pressLocal: 0, pressT: 0, butter: 0, pressItem: null, slipT: 0,
-      air: null, rail: null, railT: 0, railV: 0, railCd: 0, railItem: null, railOff: 0, bal: 0, balVel: 0,
+      air: null, rail: null, railSeg: null, railS: 0, railV: 0, railCd: 0, railItem: null, railOff: 0, steerS: 0, absorb: 0,
       bail: 0, tumble: 0, comboTimer: 0, time: 0,
     });
     this.combo.length = 0;
@@ -68,6 +68,7 @@ export class Player {
 
   setTerrain(terrain) {
     this.terrain = terrain;
+    this.powder = !!terrain.map.powder;
     this.spawn = { x: terrain.map.spawn.x, z: terrain.map.spawn.z, yaw: 0 };
     this.score = 0;
     this.respawn();
@@ -78,7 +79,7 @@ export class Player {
     const s = this.spawn;
     this.pos.set(s.x, this.terrain.height(s.x, s.z), s.z);
     this.yaw = s.yaw;
-    this.vel.set(Math.sin(s.yaw) * 2.5, 0, Math.cos(s.yaw) * 2.5);
+    this.vel.set(Math.sin(s.yaw) * 1.2, 0, Math.cos(s.yaw) * 1.2);
   }
 
   setSpawnHere() {
@@ -213,11 +214,13 @@ export class Player {
       this.slipT -= dt;
       this.yawRate = clamp(toAligned(Math.atan2(v.x, v.z), this.yaw) * 10, -9, 9);
     } else {
-      this.yawRate = damp(this.yawRate, (-inp.steer * 2.3 * Math.min(0.4 + sp / 8, 1)) / (1 + sp / 40), 10, dt);
+      this.steerS = damp(this.steerS, inp.steer, 9, dt);
+      this.yawRate = damp(this.yawRate, (-this.steerS * 2.3 * Math.min(0.4 + sp / 8, 1)) / (1 + sp / 40), this.powder ? 5 : 8, dt);
     }
     this.yaw += this.yawRate * dt;
     this.wind = damp(this.wind, this.yawRate, 3, dt);
     this.flip = damp(this.flip, 0, 14, dt);
+    this.absorb = damp(this.absorb, 0, 5, dt);
     f0.set(Math.sin(this.yaw), 0, Math.cos(this.yaw));
     f3.copy(f0).addScaledVector(n, -f0.dot(n)).normalize();
     s3.crossVectors(n, f3);
@@ -234,11 +237,16 @@ export class Player {
     this.tuck = this.tuckT > 0.5;
     this.carve = clamp(Math.abs(vs) * (loose ? 0.05 : 0.25) + Math.abs(this.yawRate * vf) * 0.03 + (this.braking ? Math.abs(vf) * 0.08 : 0), 0, 1);
     // on its edge the board holds: sideways slip bleeds off fast, forward glide barely at all
-    vs *= Math.exp(-(loose ? 0.4 : this.braking ? 3 : 9) * dt);
-    const dec = ((this.tuck ? 0.0024 : 0.0042) * vf * vf + 0.035 * G * n.y + (loose ? 0 : Math.abs(this.yawRate * vf) * 0.06) + (this.braking ? 7 : 0)) * dt;
+    vs *= Math.exp(-(loose ? 0.4 : this.braking ? 3 : this.powder ? 5 : 9) * dt);
+    const dec = ((this.powder ? 0.0085 : this.tuck ? 0.0024 : 0.0042) * vf * vf + 0.035 * G * n.y + (loose ? 0 : Math.abs(this.yawRate * vf) * 0.06) + (this.braking ? 7 : 0)
+      // deep snow drags when you're slow and lets go as you plane on top of it
+      + (this.powder ? 0.8 * Math.exp(-Math.abs(vf) / 5) : 0)) * dt;
     vf = Math.abs(vf) <= dec ? 0 : vf - Math.sign(vf) * dec;
-    // skate along on the flat
-    if (inp.pitch > 0.3 && !this.press && Math.abs(vf) < 4) vf += (vf < -0.5 ? -1 : 1) * 4 * dt;
+    // never stuck: the rider shuffles forward at walking pace unless braking, and skates harder on request
+    if (!this.braking && !this.press) {
+      if (inp.pitch > 0.3 && Math.abs(vf) < 4) vf += (vf < -0.5 ? -1 : 1) * 4 * dt;
+      else if (Math.abs(vf) < 2.5) vf += (vf < -0.5 ? -1 : 1) * 2.2 * dt;
+    }
     v.copy(f3).multiplyScalar(vf).addScaledVector(s3, vs);
 
     // ollie: the longer the hold, the bigger the pop
@@ -307,13 +315,13 @@ export class Player {
     if (inp.grab && a.time > 0.12) { a.grab += dt; a.grabName = inp.grab; }
 
     if (this.railCd <= 0 && a.time > 0.06 && v.y < 3) {
-      for (const r of this.terrain.rails) {
-        const t = tmp.copy(this.pos).sub(r.p0).dot(r.dir) / r.len;
-        if (t < 0.01 || t > 0.97) continue;
-        tmp2.copy(r.p0).addScaledVector(r.dir, t * r.len);
+      for (const r of this.terrain.rails) for (const sg of r.segs) {
+        const t = tmp.copy(this.pos).sub(sg.p0).dot(sg.dir), along = sg.s0 + t;
+        if (t < 0 || t > sg.len || along < 0.2 || along > r.total - 0.5) continue;
+        tmp2.copy(sg.p0).addScaledVector(sg.dir, t);
         const dy = this.pos.y - tmp2.y;
-        if (Math.hypot(this.pos.x - tmp2.x, this.pos.z - tmp2.z) > (r.wide ? 1.2 : 0.9) || dy > 0.8 || dy < -0.5) continue;
-        return this.lockOn(r, t, tmp2);
+        if (Math.hypot(this.pos.x - tmp2.x, this.pos.z - tmp2.z) > r.reach || dy > 0.8 || dy < -0.5) continue;
+        return this.lockOn(r, sg, along, tmp2);
       }
     }
     const h = this.terrain.height(this.pos.x, this.pos.z);
@@ -322,11 +330,10 @@ export class Player {
 
   // ---- rails -------------------------------------------------------------
 
-  lockOn(r, t, point) {
+  lockOn(r, sg, along, point) {
     const a = this.air, v = this.vel;
     // which part of the board came down over the rail: + toward the nose, - toward the tail
-    this.railOff = clamp((point.x - this.pos.x) * Math.sin(this.yaw) + (point.z - this.pos.z) * Math.cos(this.yaw), -0.5, 0.5);
-    const side = (point.x - this.pos.x) * r.dir.z - (point.z - this.pos.z) * r.dir.x;
+    this.railOff = r.width > 1 ? 0 : clamp((point.x - this.pos.x) * Math.sin(this.yaw) + (point.z - this.pos.z) * Math.cos(this.yaw), -0.5, 0.5);
     const quarters = Math.round(Math.abs(a.spin) / HALF);
     if (quarters >= 2) {
       this.combo.push({ name: quarters * 90 + ' On', pts: 80 * quarters });
@@ -334,29 +341,32 @@ export class Player {
     }
     this.resolveAir(1);
     this.rail = r;
-    this.railT = t;
-    this.railV = v.dot(r.dir);
+    this.railSeg = sg;
+    this.railS = along;
+    this.railV = v.dot(sg.dir);
     if (Math.abs(this.railV) < 4) this.railV = this.railV < 0 ? -4 : 4;
     this.railItem = { name: '50-50', pts: 150 };
     this.combo.push(this.railItem);
     this.flip = wrap(this.flip);
-    this.bal = clamp(-side * 0.5 + (Math.random() - 0.5) * 0.2, -0.6, 0.6);
-    this.balVel = 0;
     this.yawRate = 0;
     this.hooks.sound.clank();
   }
 
   stepRail(dt, inp, released) {
-    const r = this.rail, M = this.M;
-    this.railV += (-G * r.dir.y - 0.4 * Math.sign(this.railV)) * dt;
-    this.railT += (this.railV * dt) / r.len;
-    this.pos.copy(r.p0).addScaledVector(r.dir, this.railT * r.len);
-    this.vel.copy(r.dir).multiplyScalar(this.railV);
+    const r = this.rail, M = this.M, segs = r.segs;
+    this.railV += (-G * this.railSeg.dir.y - 0.4 * Math.sign(this.railV)) * dt;
+    this.railS += this.railV * dt;
+    let i = segs.indexOf(this.railSeg);
+    while (i < segs.length - 1 && this.railS > segs[i].s0 + segs[i].len) i++;
+    while (i > 0 && this.railS < segs[i].s0) i--;
+    const sg = (this.railSeg = segs[i]);
+    this.pos.copy(sg.p0).addScaledVector(sg.dir, this.railS - sg.s0);
+    this.vel.copy(sg.dir).multiplyScalar(this.railV);
     this.flip = damp(this.flip, 0, 14, dt);
     this.carve = 0;
 
     // the trick is set by how the board sits on the rail
-    const way = this.railV < 0 ? -1 : 1, tx = r.dir.x * way, tz = r.dir.z * way;
+    const way = this.railV < 0 ? -1 : 1, tx = sg.dir.x * way, tz = sg.dir.z * way;
     const rel = wrap(this.yaw - Math.atan2(tx, tz));
     let across = Math.abs(rel);
     if (across > HALF) across = Math.PI - across;
@@ -371,31 +381,20 @@ export class Player {
     else { name = facing ? 'Bluntslide' : 'Tailslide'; mult = facing ? 2 : 1.7; }
     this.railItem.name = name;
     this.railItem.pts += 320 * mult * dt;
-    // the board locks square to the rail, straight or sideways
-    const snap = sideways ? HALF : 0, target = Math.atan2(tx, tz) + (rel < 0 ? -snap : snap);
-    this.yaw += clamp(toAligned(target, this.yaw) * 8, -6, 6) * dt;
-
-    // balance: you tip slowly and steer against it
-    const hard = mult > 1 ? 1.3 : 1;
-    this.balVel += (this.bal * M.tip * hard + inp.steer * 6) * dt + (Math.random() - 0.5) * M.kick * 2 * Math.sqrt(dt);
-    this.balVel *= Math.exp(-1.5 * dt);
-    this.bal += this.balVel * dt;
+    // steer to swing the board round on the rail; let go and it locks square, straight or sideways
+    if (Math.abs(inp.steer) > 0.2) this.yawRate = damp(this.yawRate, -inp.steer * 4.5, 10, dt);
+    else {
+      const snap = sideways ? HALF : 0, target = Math.atan2(tx, tz) + (rel < 0 ? -snap : snap);
+      this.yawRate = clamp(toAligned(target, this.yaw) * 8, -6, 6);
+    }
+    this.yaw += this.yawRate * dt;
 
     if (Math.random() < 0.4) this.hooks.puff(this.pos, 0, 0.5, 0, 1.5);
     if (inp.jump) this.charge = Math.min(this.charge + dt / 0.9, 1);
-    const fell = Math.abs(this.bal) > 1;
-    if (fell && M.strict) return this.crash('Slipped off');
-    if (fell || this.railT < 0 || this.railT > 1 || released) {
+    if (this.railS < 0 || this.railS > r.total || released) {
       if (released) { this.vel.y += M.pop0 + M.pop1 * this.charge * 0.8; this.hooks.sound.pop(); }
-      if (fell) {
-        // tipped off the side
-        const s = Math.sign(this.bal);
-        this.vel.x += -r.dir.z * way * s * 2.5;
-        this.vel.z += r.dir.x * way * s * 2.5;
-        this.hooks.flash('Off balance', 'meh');
-      }
       this.railItem.pts = Math.round(this.railItem.pts);
-      this.railCd = fell ? 0.6 : 0.35;
+      this.railCd = 0.35;
       this.charge = 0;
       this.beginAir(true);
     }
@@ -421,10 +420,13 @@ export class Player {
     this.flip = wrap(this.flip);
     this.yawRate = 0;
     this.wind = 0;
+    this.steerS = 0;
+    this.absorb = Math.min(impact / 9, 1);
     this.hooks.sound.thump(impact);
     for (let i = 0; i < 14; i++) this.hooks.puff(this.pos, v.x * 0.3, 1.5, v.z * 0.3, 4 + impact * 0.4);
-    if (flipOff > M.flipBail || yawOff > M.yawBail || impact > 16) return this.crash();
-    const sketchy = yawOff > M.yawSketchy || flipOff > M.flipSketchy || impact > 12.5;
+    const soft = this.powder ? 7 : 0;
+    if (flipOff > M.flipBail || yawOff > M.yawBail || impact > 16 + soft) return this.crash();
+    const sketchy = yawOff > M.yawSketchy || flipOff > M.flipSketchy || impact > 12.5 + soft;
     if (sketchy) {
       v.multiplyScalar(0.75);
       if (airTricks(a).length) this.hooks.flash('Sketchy', 'meh');

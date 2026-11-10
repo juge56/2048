@@ -6,7 +6,7 @@ import { Rider } from './rider.js';
 import { Sound } from './audio.js';
 import { Editor } from './editor.js';
 import { MODES } from './player.js';
-import { BUILTIN, loadCustom, saveCustom, sanitizeMap, blankMap, newId, getBest, setBest, isBuiltin } from './maps.js';
+import { BUILTIN, loadCustom, saveCustom, sanitizeMap, blankMap, newId, getBest, setBest, isBuiltin, centerX } from './maps.js';
 
 const DT = 1 / 120, TAU = Math.PI * 2;
 const touch = matchMedia('(pointer: coarse)').matches;
@@ -32,6 +32,7 @@ sun.castShadow = true;
 sun.shadow.mapSize.set(touch ? 1024 : 2048, touch ? 1024 : 2048);
 sun.shadow.bias = -0.0006;
 sun.shadow.normalBias = 0.06;
+sun.shadow.radius = 3;
 scene.add(hemi, sun, sun.target);
 
 const skyU = { zenith: { value: new THREE.Color() }, horizon: { value: new THREE.Color() }, sunCol: { value: new THREE.Color() }, sunDir: { value: sunDir } };
@@ -145,12 +146,12 @@ const trail = { pos: new Float32Array(TRAIL * 6), col: new Float32Array(TRAIL * 
   trail.mesh.frustumCulled = false;
   scene.add(trail.mesh);
 }
-function trailPush(p, side, up, on) {
+function trailPush(p, side, up, on, deep) {
   trail.pos.copyWithin(0, 6);
   trail.on.copyWithin(0, 1);
   const k = (TRAIL - 1) * 6;
   for (let s = 0; s < 2; s++) {
-    const w = s ? 0.15 : -0.15;
+    const w = (s ? 1 : -1) * (deep ? 0.34 : 0.15);
     trail.pos[k + s * 3] = p.x + side.x * w + up.x * 0.07;
     trail.pos[k + s * 3 + 1] = p.y + side.y * w + up.y * 0.07;
     trail.pos[k + s * 3 + 2] = p.z + side.z * w + up.z * 0.07;
@@ -158,7 +159,7 @@ function trailPush(p, side, up, on) {
   trail.on[TRAIL - 1] = on ? 1 : 0;
   for (let i = 0; i < TRAIL; i++) {
     // a segment is drawn only if both of its ends touched the snow
-    const a = trail.on[i] && (i === 0 || trail.on[i - 1]) && (i === TRAIL - 1 || trail.on[i + 1]) ? 0.4 * Math.min(i / 40, 1) : 0;
+    const a = trail.on[i] && (i === 0 || trail.on[i - 1]) && (i === TRAIL - 1 || trail.on[i + 1]) ? (deep ? 0.6 : 0.4) * Math.min(i / 40, 1) : 0;
     for (let s = 0; s < 2; s++) trail.col.set([0.55, 0.66, 0.86, a], i * 8 + s * 4);
   }
   trail.mesh.geometry.attributes.position.needsUpdate = true;
@@ -197,8 +198,8 @@ function setRideMode(name) {
   try { localStorage.setItem('sidehit.mode', player.mode); } catch { /* storage blocked */ }
   $('b-mode').textContent = 'Riding: ' + (player.mode === 'sim' ? 'Sim' : 'Arcade');
   $('modehelp').textContent = player.mode === 'sim'
-    ? 'Sim: slower spins unless you wind up, landings must be lined up, catching an edge or losing balance on a rail is a fall.'
-    : 'Arcade: the board straightens itself before landing, and losing balance on a rail just drops you off.';
+    ? 'Sim: slower spins unless you wind up, landings must be lined up, and catching an edge out of a butter is a fall.'
+    : 'Arcade: the board straightens itself before landing and butters always ride out.';
 }
 { let saved = 'arcade'; try { saved = localStorage.getItem('sidehit.mode') || 'arcade'; } catch { /* storage blocked */ } setRideMode(MODES[saved] ? saved : 'arcade'); }
 $('b-mode').addEventListener('click', () => setRideMode(player.mode === 'sim' ? 'arcade' : 'sim'));
@@ -211,6 +212,7 @@ function setMap(map) {
   scene.add(app.terrain.group);
   app.best = getBest(map.id);
   applySky(map.sky);
+  spray.points.material.size = map.powder ? 0.95 : 0.6;
   player.setTerrain(app.terrain);
   resetView();
 }
@@ -264,7 +266,8 @@ function renderMenu() {
     name.textContent = map.name;
     const meta = document.createElement('span');
     const best = getBest(map.id);
-    meta.textContent = `${custom ? 'Custom' : 'Built-in'} · ${map.objects.length} features · ${Math.round(map.length)} m` + (best ? ` · best ${best.toLocaleString()}` : '');
+    const kind = map.powder ? 'Powder' : map.curve > 0.3 && map.length > 1000 ? 'Course' : 'Park';
+    meta.textContent = `${kind}${custom ? ' · custom' : ''} · ${map.powder ? 'no features' : map.objects.length + ' features'} · ${Math.round(map.length)} m` + (best ? ` · best ${best.toLocaleString()}` : '');
     info.append(name, meta);
     info.addEventListener('click', () => { if (map !== app.map) { setMap(map); renderMenu(); } });
     const btn = (label, fn, cls = '') => {
@@ -418,7 +421,7 @@ const tmp = new THREE.Vector3(), tmp2 = new THREE.Vector3(), up = new THREE.Vect
 function chaseCamera(dt) {
   const p = player, T = app.terrain, hs = Math.hypot(p.vel.x, p.vel.z);
   if (hs > 2) tmp.set(p.vel.x / hs, 0, p.vel.z / hs); else tmp.set(Math.sin(p.yaw), 0, Math.cos(p.yaw));
-  cam.dir.lerp(tmp, 1 - Math.exp(-3.2 * dt));
+  cam.dir.lerp(tmp, 1 - Math.exp(-2.6 * dt));
   if (cam.dir.lengthSq() < 1e-4) cam.dir.copy(tmp);
   cam.dir.normalize();
   tmp.copy(p.pos).addScaledVector(cam.dir, -(6.6 + hs * 0.07));
@@ -426,8 +429,8 @@ function chaseCamera(dt) {
   tmp2.copy(p.pos).addScaledVector(cam.dir, 5);
   tmp2.y += 0.7;
   if (cam.snap) { cam.pos.copy(tmp); cam.look.copy(tmp2); cam.snap = false; }
-  cam.pos.lerp(tmp, 1 - Math.exp(-7 * dt));
-  cam.look.lerp(tmp2, 1 - Math.exp(-10 * dt));
+  cam.pos.lerp(tmp, 1 - Math.exp(-5.5 * dt));
+  cam.look.lerp(tmp2, 1 - Math.exp(-7.5 * dt));
   cam.pos.y = Math.max(cam.pos.y, T.height(cam.pos.x, cam.pos.z) + 1.0);
   camera.position.copy(cam.pos);
   camera.lookAt(cam.look);
@@ -437,10 +440,11 @@ function menuCamera(dt) {
   // slow fly-around of the selected park
   cam.orbit += dt * 0.07;
   const m = app.map, z = m.length * 0.35, r = 150;
-  tmp.set(Math.sin(cam.orbit) * r, 0, z - Math.cos(cam.orbit) * r * 0.9);
-  tmp.y = Math.max(app.terrain.base(0, z) + 75, app.terrain.base(tmp.x, tmp.z) + 25);
+  const cx = centerX(m, z);
+  tmp.set(cx + Math.sin(cam.orbit) * r, 0, z - Math.cos(cam.orbit) * r * 0.9);
+  tmp.y = Math.max(app.terrain.base(cx, z) + 75, app.terrain.base(tmp.x, tmp.z) + 25);
   camera.position.copy(tmp);
-  camera.lookAt(0, app.terrain.base(0, z), z);
+  camera.lookAt(cx, app.terrain.base(cx, z), z);
   setFov(55);
   cam.snap = true;
 }
@@ -450,7 +454,7 @@ function setFov(f) {
   camera.updateProjectionMatrix();
 }
 
-const vis = { railOff: 0, press: 0 };
+const vis = { railOff: 0, press: 0, sink: 0 };
 const basis = new THREE.Matrix4(), bx = new THREE.Vector3(), bz = new THREE.Vector3(), f0 = new THREE.Vector3();
 function updateRider(dt) {
   const p = player, onSnow = p.state === 'ground';
@@ -461,7 +465,9 @@ function updateRider(dt) {
   bx.crossVectors(up, bz);
   basis.makeBasis(bx, up, bz);
   rider.root.quaternion.setFromRotationMatrix(basis);
-  rider.root.position.copy(p.pos).addScaledVector(up, p.rail ? 0.09 : 0.03);
+  // in powder the board rides low at walking pace and planes up with speed
+  vis.sink = damp(vis.sink, p.powder && onSnow ? 0.3 * (1 - clamp(p.vel.length() / 14, 0, 1)) : 0, 5, dt);
+  rider.root.position.copy(p.pos).addScaledVector(up, (p.rail ? 0.09 : 0.03) - vis.sink);
   vis.railOff = damp(vis.railOff, p.rail ? p.railOff : 0, 12, dt);
   rider.root.position.addScaledVector(bz, -vis.railOff);
   // a press lifts one end of the board off the snow
@@ -469,23 +475,24 @@ function updateRider(dt) {
   rider.body.rotation.x = vis.press * 0.3;
   rider.body.position.y = -0.8 + Math.abs(Math.sin(vis.press * 0.3)) * 0.6;
   const sp = p.vel.length();
-  p.lean = damp(p.lean || 0, p.rail ? p.bal * 0.45 : onSnow && !p.press ? clamp(-p.yawRate * sp * 0.035, -0.6, 0.6) : 0, 8, dt);
+  p.lean = damp(p.lean || 0, onSnow && !p.press ? clamp(-p.yawRate * sp * 0.035, -0.6, 0.6) : 0, 6, dt);
   rider.leanG.rotation.z = p.lean;
   rider.leanG.rotation.y = damp(rider.leanG.rotation.y, onSnow && p.braking && sp > 1 ? 1.1 : 0, 9, dt);
   rider.pivot.rotation.x = p.flip + p.tumble;
   rider.pose({
-    crouch: p.rail ? 0.35 + 0.5 * p.charge : onSnow ? Math.max(p.press ? 0.5 : p.tuck ? 0.75 : 0.22 + Math.abs(p.lean) * 0.5, 0.2 + 0.85 * p.charge) : 0.55,
+    crouch: p.rail ? 0.35 + 0.5 * p.charge : onSnow ? Math.max(p.press ? 0.5 : p.tuck ? 0.7 : 0.18 + 0.12 * Math.min(sp / 20, 1) + Math.abs(p.lean) * 0.55, 0.2 + 0.85 * p.charge, p.absorb * 0.95) : 0.55,
     grab: p.air && p.air.time > 0.12 ? inp.grab : '',
     airborne: !!p.rail || (p.state === 'air' && p.air.time > 0.15), bail: p.bail > 0, time: p.time,
   }, dt);
 
-  if (onSnow && p.carve > 0.12 && sp > 3) {
-    const count = Math.min(Math.round(p.carve * 5 * dt * 60), 6), side = Math.sign(p.yawRate) || 1;
+  const deep = p.powder ? 0.35 + Math.min(sp / 25, 0.5) : 0;
+  if (onSnow && (p.carve > 0.12 || deep) && sp > 3) {
+    const count = Math.min(Math.round((p.carve * 7 + deep * 4) * dt * 60), 9), side = Math.sign(p.yawRate) || 1;
     for (let i = 0; i < count; i++) puff(p.pos, p.vel.x * 0.35 + p.s3.x * side * 2.5, 0.8 + p.carve * 1.6, p.vel.z * 0.35 + p.s3.z * side * 2.5, 1.6 + p.carve * 2);
   }
   if (trail.last.distanceToSquared(p.pos) > 0.16) {
     trail.last.copy(p.pos);
-    trailPush(p.pos, bx, up, onSnow);
+    trailPush(p.pos, bx, up, onSnow, p.powder);
   }
 }
 
@@ -504,7 +511,8 @@ function updateSpray(dt) {
 }
 
 // ------------------------------------------------------------------ hud ----
-const hud = { force: true, score: -1, best: -1, speed: -1, combo: '', charge: 0, bal: null };
+const hud = { force: true, score: -1, best: -1, speed: -1, combo: '', charge: 0, clock: -1 };
+const clockText = (t) => Math.floor(t / 60) + ':' + String(Math.floor(t % 60)).padStart(2, '0');
 function updateHud(dt) {
   const set = (key, value, el, fmt) => {
     if (hud[key] === value && !hud.force) return;
@@ -526,14 +534,9 @@ function updateHud(dt) {
     $('tricks').textContent = names || '';
     $('points').textContent = pts || '';
   }
-  // ollie charge and rail balance meters
-  const charge = Math.round(player.charge * 50) / 50, bal = player.rail ? Math.round(clamp(player.bal, -1, 1) * 50) / 50 : null;
+  const charge = Math.round(player.charge * 50) / 50;
   if (charge !== hud.charge) { hud.charge = charge; $('charge').hidden = charge <= 0; $('chargefill').style.transform = `scaleX(${charge})`; }
-  if (bal !== hud.bal) {
-    hud.bal = bal;
-    $('balance').hidden = bal === null;
-    if (bal !== null) { $('baldot').style.left = 50 + bal * 50 + '%'; $('balance').classList.toggle('warn', Math.abs(bal) > 0.65); }
-  }
+  set('clock', Math.floor(player.time), 'clock', clockText);
   hud.force = false;
   if (flashTimer > 0 && (flashTimer -= dt) <= 0) $('flash').className = '';
 }
@@ -560,8 +563,10 @@ function frame(now) {
     while (acc >= DT) { player.step(DT, inp); acc -= DT; }
     const m = app.map, p = player.pos;
     // bottom of the hill (or lost in the woods): take the lift back up
-    if ((p.z > m.length + 25 && player.state === 'ground') || p.z > m.length + 110 || Math.abs(p.x) > m.width / 2 + 110 || p.z < -70) {
+    const done = p.z > m.length + 8 && player.state === 'ground';
+    if (done || p.z > m.length + 110 || Math.abs(p.x - centerX(m, p.z)) > m.width / 2 + 110 || p.z < -70) {
       player.bank();
+      if (done) { const t = clockText(player.time), sc = player.score; setTimeout(() => flash(`Run ${t} · ${sc.toLocaleString()}`, 'good'), 50); }
       player.respawn();
       resetView();
     }
@@ -575,7 +580,8 @@ function frame(now) {
   } else {
     updateRider(dt);
     menuCamera(dt);
-    focus = tmp2.set(0, app.terrain.base(0, app.map.length * 0.35), app.map.length * 0.35);
+    const fz = app.map.length * 0.35, fx = centerX(app.map, fz);
+    focus = tmp2.set(fx, app.terrain.base(fx, fz), fz);
   }
   updateSpray(dt);
   sky.position.copy(camera.position);

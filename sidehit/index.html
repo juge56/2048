@@ -19,13 +19,13 @@
   </div>
   <div class="stat right">
     <div class="value"><span id="speed">0</span><small>km/h</small></div>
+    <div class="sub" id="clock">0:00</div>
   </div>
   <div id="combo">
     <div id="flash"></div>
     <div id="tricks"></div>
     <div id="points"></div>
     <div id="charge" class="meter" hidden><i id="chargefill"></i></div>
-    <div id="balance" class="meter" hidden><b id="baldot"></b></div>
   </div>
   <div class="bar" id="playbar">
     <button id="b-menu">Parks</button>
@@ -56,7 +56,7 @@
     </div>
     <p id="modehelp" class="hint"></p>
     <table class="keys desktop">
-      <tr><td><kbd>A</kbd> <kbd>D</kbd></td><td>Carve &middot; spin in the air &middot; balance on rails</td></tr>
+      <tr><td><kbd>A</kbd> <kbd>D</kbd></td><td>Carve &middot; spin in the air &middot; swing the board on rails</td></tr>
       <tr><td><kbd>W</kbd> <kbd>S</kbd></td><td>Nose / tail press (steer to butter) &middot; flips in the air &middot; presses on rails</td></tr>
       <tr><td><kbd>Space</kbd></td><td>Hold longer for a bigger ollie, release to pop</td></tr>
       <tr><td><kbd>Shift</kbd></td><td>Brake</td></tr>
@@ -64,7 +64,7 @@
       <tr><td><kbd>R</kbd> <kbd>T</kbd></td><td>Respawn &middot; set the respawn point where you stand</td></tr>
     </table>
     <table class="keys mobile">
-      <tr><td>Left thumb</td><td>Sideways: carve, spin, balance on rails. Up / down: nose / tail press, flips in the air</td></tr>
+      <tr><td>Left thumb</td><td>Sideways: carve, spin, swing the board on rails. Up / down: nose / tail press, flips in the air</td></tr>
       <tr><td>Jump</td><td>Hold longer for a bigger ollie, release to pop</td></tr>
       <tr><td>Grab &middot; Brake</td><td>Hold</td></tr>
     </table>
@@ -82,10 +82,14 @@
   </div>
   <div id="settings" class="panel">
     <label>Name <input id="m-name" maxlength="40"></label>
-    <label>Steepness <input id="m-slope" type="range" min="0.14" max="0.5" step="0.01"></label>
-    <label>Length <input id="m-length" type="range" min="250" max="1000" step="10"></label>
-    <label>Width <input id="m-width" type="range" min="80" max="240" step="10"></label>
+    <label>Steepness <input id="m-slope" type="range" min="0.16" max="0.5" step="0.01"></label>
+    <label>Length <input id="m-length" type="range" min="250" max="2400" step="10"></label>
+    <label>Width <input id="m-width" type="range" min="80" max="300" step="10"></label>
     <label>Rolling terrain <input id="m-bumps" type="range" min="0" max="1" step="0.05"></label>
+    <label>Winding <input id="m-curve" type="range" min="0" max="1" step="0.05"></label>
+    <label>Trees on the run <input id="m-trees" type="range" min="0" max="1" step="0.05"></label>
+    <label>Cliffs and drops <input id="m-cliffs" type="range" min="0" max="1" step="0.05"></label>
+    <label>Deep powder <input id="m-powder" type="checkbox"></label>
     <label>Light <select id="m-sky"><option value="bluebird">Bluebird</option><option value="golden">Golden hour</option><option value="dusk">Dusk</option></select></label>
   </div>
   <div id="bottom">
@@ -97,12 +101,14 @@
       <button id="bigger" title="Bigger / longer">+</button>
       <button id="lower" title="Lower">▼</button>
       <button id="higher" title="Higher">▲</button>
+      <button id="shape">Shape</button>
       <button id="dup">Copy</button>
       <button id="del" class="danger">Delete</button>
     </div>
     <div id="tip"></div>
     <div id="tools">
       <button data-tool="select">Select</button>
+      <button data-tool="jump">Jump</button>
       <button data-tool="kicker">Kicker</button>
       <button data-tool="roller">Roller</button>
       <button data-tool="rail">Rail</button>

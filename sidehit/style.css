@@ -68,8 +68,6 @@ button.on { background: #fff; color: #1b2a44; }
 .meter { position: relative; width: 150px; height: 8px; margin: 10px auto 0; border-radius: 4px; background: rgba(15, 45, 85, .5); border: 1px solid rgba(255, 255, 255, .5); }
 .meter i { position: absolute; inset: 0; border-radius: 3px; background: #ffe14a; transform-origin: left; }
 .meter b { position: absolute; top: -4px; width: 14px; height: 14px; margin-left: -7px; border-radius: 50%; background: #fff; }
-#balance::before { content: ""; position: absolute; left: 50%; top: -3px; bottom: -3px; width: 2px; margin-left: -1px; background: rgba(255, 255, 255, .7); }
-#balance.warn b { background: #ff5a6e; }
 .hint { font-size: 13px; font-weight: 600; opacity: .9; margin: 12px 8px 0; line-height: 1.45; }
 
 /* ---- menu ---- */
@@ -113,6 +111,8 @@ kbd { display: inline-block; min-width: 24px; padding: 2px 6px; border-radius: 5
 #settings.open { display: flex; }
 #settings label { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 13px; font-weight: 700; }
 #settings input, #settings select { width: 170px; }
+#settings input[type=checkbox] { width: 20px; height: 20px; }
+#settings { max-height: calc(100% - 190px); overflow-y: auto; touch-action: pan-y; }
 input:not([type=range]), select, textarea {
   background: rgba(255, 255, 255, .12); border: 1px solid rgba(255, 255, 255, .35); border-radius: 8px; padding: 6px 8px;
   -webkit-user-select: text; user-select: text;

@@ -6,8 +6,9 @@ The original version is a small clone of [1024](https://play.google.com/store/ap
 ## Sidehit
 [`sidehit/`](sidehit/) is a separate, self-contained game in this repo: an original 3D terrain-park snowboarding game with a built-in park editor.
 
-- **Ride:** physics-driven carving, ollies, kickers, rollers, rails and boxes, with spins, flips, grabs and grinds feeding a combo score. Set a respawn point anywhere to session a single feature.
-- **Build:** tap to place features, drag to move them, rotate and resize them, and reshape the hill (steepness, length, width, rolling terrain, light). Parks save in the browser automatically.
+- **Ride:** physics-driven carving, ollies sized by how long you hold, nose and tail presses, butters, and rail tricks named by how the board lands on the rail. Spins, flips, grabs and grinds feed a combo score. Arcade and Sim riding modes.
+- **Runs:** terrain parks, long winding downhill courses, and deep-powder backcountry runs with trees, pillows and drops.
+- **Build:** tap to place jumps, kickers, rollers, rails (straight, rainbow, Z, kinked), boxes (straight, wide, flat-down) and trees; drag, rotate and resize them; and reshape the hill (steepness, length, width, winding, cliffs, trees, powder, light). Parks save in the browser automatically.
 - **Share:** every park exports as a short JSON code that anyone can paste under Import.
 
 It is a static page with no build step. Serve the repo root (for example `python3 -m http.server`) and open `/sidehit/`. Keyboard and touch controls are listed on the menu. It uses a vendored copy of [three.js](https://threejs.org/) (MIT).

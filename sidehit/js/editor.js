@@ -1,14 +1,15 @@
 // Park editor: overhead camera, tap to place, drag to move, panel to tweak.
 import * as THREE from '../vendor/three.module.min.js';
-import { footprint, KICKER, ROLLER } from './terrain.js';
-import { sanitizeObject, MAX_OBJECTS } from './maps.js';
+import { footprint, bumpSize } from './terrain.js';
+import { sanitizeObject, MAX_OBJECTS, SHAPES, SIZES, centerX, pathDir } from './maps.js';
 
 const $ = (id) => document.getElementById(id);
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
-const LABEL = { kicker: 'Kicker', roller: 'Roller', rail: 'Rail', box: 'Box', tree: 'Tree' };
-const SIZE = { kicker: ['S', 'M', 'L', 'XL'], roller: ['S', 'M', 'L'] };
+const LABEL = { kicker: 'Kicker', jump: 'Jump', roller: 'Roller', rail: 'Rail', box: 'Box', tree: 'Tree' };
+const SIZE = { kicker: ['S', 'M', 'L', 'XL'], jump: ['S', 'M', 'L'], roller: ['S', 'M', 'L'] };
+const SHAPE = { straight: 'straight', rainbow: 'rainbow', z: 'Z', kink: 'kinked', wide: 'wide', flatdown: 'flat-down' };
 const DEFAULTS = {
-  kicker: { s: 1, r: 0 }, roller: { s: 1, r: 0 }, rail: { len: 14, h: 0.45, r: 0 }, box: { len: 14, h: 0.5, r: 0 }, tree: { s: 1 },
+  kicker: { s: 1, r: 0 }, jump: { s: 0, r: 0 }, roller: { s: 1, r: 0 }, rail: { len: 14, h: 0.45, r: 0 }, box: { len: 14, h: 0.5, r: 0 }, tree: { s: 1 },
 };
 
 export class Editor {
@@ -41,7 +42,7 @@ export class Editor {
     c.addEventListener('pointermove', (e) => this.move(e));
     c.addEventListener('pointerup', (e) => this.up(e));
     c.addEventListener('pointercancel', (e) => this.up(e, true));
-    c.addEventListener('wheel', (e) => { if (this.active) { this.dist = clamp(this.dist * (e.deltaY > 0 ? 1.12 : 0.89), 25, 600); e.preventDefault(); } }, { passive: false });
+    c.addEventListener('wheel', (e) => { if (this.active) { this.dist = clamp(this.dist * (e.deltaY > 0 ? 1.12 : 0.89), 25, 900); e.preventDefault(); } }, { passive: false });
 
     for (const b of document.querySelectorAll('#tools button')) b.addEventListener('click', () => this.setTool(b.dataset.tool));
     const act = (id, fn) => $(id).addEventListener('click', () => { if (this.sel) { fn(this.sel); this.commit(); } });
@@ -51,6 +52,7 @@ export class Editor {
     act('bigger', (o) => this.resize(o, 1));
     act('lower', (o) => { o.h = clamp(Math.round((o.h - 0.1) * 10) / 10, 0.3, 1.5); });
     act('higher', (o) => { o.h = clamp(Math.round((o.h + 0.1) * 10) / 10, 0.3, 1.5); });
+    act('shape', (o) => { const all = SHAPES[o.t]; if (all) o.k = all[(all.indexOf(o.k) + 1) % all.length]; });
     $('dup').addEventListener('click', () => {
       if (!this.sel || this.map.objects.length >= MAX_OBJECTS) return;
       const o = sanitizeObject({ ...this.sel, x: this.sel.x + 6 }, this.map);
@@ -75,6 +77,10 @@ export class Editor {
     bind('m-length', 'length', Number);
     bind('m-width', 'width', Number);
     bind('m-bumps', 'bumps', Number);
+    bind('m-curve', 'curve', Number);
+    bind('m-trees', 'trees', Number);
+    bind('m-cliffs', 'cliffs', Number);
+    $('m-powder').addEventListener('change', () => { this.map.powder = $('m-powder').checked; this.app.rebuildGround(); });
     bind('m-sky', 'sky', String);
     $('b-settings').addEventListener('click', () => $('settings').classList.toggle('open'));
   }
@@ -88,13 +94,17 @@ export class Editor {
     this.sel = null;
     this.setTool('select');
     const m = this.map;
-    this.target.set(0, 0, Math.min(m.length * 0.3, 160));
+    this.target.set(centerX(m, 120), 0, Math.min(m.length * 0.3, 160));
     this.dist = 170;
     $('m-name').value = m.name;
     $('m-slope').value = m.slope;
     $('m-length').value = m.length;
     $('m-width').value = m.width;
     $('m-bumps').value = m.bumps;
+    $('m-curve').value = m.curve;
+    $('m-trees').value = m.trees;
+    $('m-cliffs').value = m.cliffs;
+    $('m-powder').checked = m.powder;
     $('m-sky').value = m.sky;
     $('settings').classList.remove('open');
     this.refreshPanel();
@@ -108,7 +118,8 @@ export class Editor {
   // Called after the terrain object was replaced (settings change).
   terrainChanged() {
     const m = this.map;
-    for (const o of m.objects) { o.x = clamp(o.x, -m.width / 2 - 20, m.width / 2 + 20); o.z = clamp(o.z, 0, m.length + 40); }
+    for (const o of m.objects) { o.z = clamp(o.z, 0, m.length + 40); const c = centerX(m, o.z); o.x = clamp(o.x, c - m.width / 2 - 20, c + m.width / 2 + 20); }
+    m.spawn.x = clamp(m.spawn.x, centerX(m, m.spawn.z) - m.width / 2, centerX(m, m.spawn.z) + m.width / 2);
     this.refreshPanel();
   }
 
@@ -120,8 +131,7 @@ export class Editor {
   }
 
   resize(o, d) {
-    if (o.t === 'kicker') o.s = clamp(o.s + d, 0, KICKER.length - 1);
-    else if (o.t === 'roller') o.s = clamp(o.s + d, 0, ROLLER.length - 1);
+    if (SIZES[o.t]) o.s = clamp(o.s + d, 0, SIZES[o.t] - 1);
     else if (o.t === 'tree') o.s = clamp(Math.round((o.s + d * 0.2) * 10) / 10, 0.6, 2);
     else o.len = clamp(o.len + d * 2, 6, 40);
   }
@@ -142,11 +152,11 @@ export class Editor {
     let info = LABEL[o.t];
     if (SIZE[o.t]) info += ' ' + SIZE[o.t][o.s];
     else if (o.t === 'tree') info += ' ×' + o.s.toFixed(1);
-    else info += ` ${o.len} m · ${o.h.toFixed(1)} m high`;
+    else info = `${SHAPE[o.k][0].toUpperCase() + SHAPE[o.k].slice(1)} ${LABEL[o.t].toLowerCase()} · ${o.len} m · ${o.h.toFixed(1)} m high`;
     $('selinfo').textContent = info;
     const rail = o.t === 'rail' || o.t === 'box';
     for (const id of ['rotl', 'rotr']) $(id).hidden = o.t === 'tree';
-    for (const id of ['lower', 'higher']) $(id).hidden = !rail;
+    for (const id of ['lower', 'higher', 'shape']) $(id).hidden = !rail;
   }
 
   ground(e) {
@@ -187,7 +197,7 @@ export class Editor {
     this.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
     if (this.pointers.size === 2 && this.pinch) {
       const [a, b] = [...this.pointers.values()];
-      this.dist = clamp((this.pinch.dist * this.pinch.d) / Math.max(Math.hypot(a.x - b.x, a.y - b.y), 1), 25, 600);
+      this.dist = clamp((this.pinch.dist * this.pinch.d) / Math.max(Math.hypot(a.x - b.x, a.y - b.y), 1), 25, 900);
       return;
     }
     const d = this.drag;
@@ -198,12 +208,13 @@ export class Editor {
     if (!g) return;
     const m = this.map;
     if (d.obj) {
-      d.obj.x = clamp(g.x + d.off.x, -m.width / 2 - 20, m.width / 2 + 20);
       d.obj.z = clamp(g.z + d.off.z, 0, m.length + 40);
+      const c = centerX(m, d.obj.z);
+      d.obj.x = clamp(g.x + d.off.x, c - m.width / 2 - 20, c + m.width / 2 + 20);
       this.terrain.refreshObject(d.obj);
     } else if (d.g) {
       // pan: keep the grabbed point of snow under the finger
-      this.target.x = clamp(this.target.x + d.g.x - g.x, -m.width, m.width);
+      this.target.x = clamp(this.target.x + d.g.x - g.x, -m.width - 100, m.width + 100);
       this.target.z = clamp(this.target.z + d.g.z - g.z, -40, m.length + 80);
     }
   }
@@ -222,13 +233,13 @@ export class Editor {
       this.sel = this.pick(d.g);
       this.refreshPanel();
     } else if (this.tool === 'spawn') {
-      m.spawn = { x: clamp(d.g.x, -m.width / 2, m.width / 2), z: clamp(d.g.z, 2, m.length - 60) };
+      const sz = clamp(d.g.z, 2, m.length - 60), sc = centerX(m, sz);
+      m.spawn = { x: clamp(d.g.x, sc - m.width / 2, sc + m.width / 2), z: sz };
       this.commit();
     } else if (m.objects.length < MAX_OBJECTS) {
-      const o = sanitizeObject({ t: this.tool, x: d.g.x, z: d.g.z, ...DEFAULTS[this.tool] }, m);
-      // rails and boxes are anchored at their uphill end; centre the others on the tap
-      if (o.t === 'kicker') o.z = Math.max(o.z - KICKER[o.s].L / 2, 0);
-      if (o.t === 'roller') o.z = Math.max(o.z - ROLLER[o.s].L / 2, 0);
+      // new features point down the run; shaped snow is centred on the tap, rails start at it
+      const o = sanitizeObject({ t: this.tool, x: d.g.x, z: d.g.z, ...DEFAULTS[this.tool], r: pathDir(m, d.g.z) }, m);
+      if (SIZES[o.t]) o.z = Math.max(o.z - bumpSize(o).len / 2, 0);
       m.objects.push(o);
       this.sel = o;
       this.commit();
