@@ -137,11 +137,12 @@ export class Rider {
 
   // Fetch the model and bind it to the skeleton. Resolves when the rider can be drawn.
   async load(dir) {
-    const [gltf, bin, image] = await Promise.all([
-      fetch(dir + 'scene.gltf').then((r) => r.json()),
-      fetch(dir + 'scene.bin').then((r) => r.arrayBuffer()),
+    // model.json is scene.gltf with scene.bin packed inside as base64, so it can be served as one plain data file
+    const [gltf, image] = await Promise.all([
+      fetch(dir + 'model.json').then((r) => r.json()),
       new Promise((ok, fail) => { const im = new Image(); im.onload = () => ok(im); im.onerror = fail; im.src = dir + 'baseColor.webp'; }),
     ]);
+    const bin = Uint8Array.from(atob(gltf.binBase64), (ch) => ch.charCodeAt(0)).buffer;
     const read = (i) => {
       const a = gltf.accessors[i], view = gltf.bufferViews[a.bufferView], n = { VEC3: 3, VEC2: 2, SCALAR: 1 }[a.type];
       const start = (view.byteOffset || 0) + (a.byteOffset || 0), stride = view.byteStride || n * 4;
