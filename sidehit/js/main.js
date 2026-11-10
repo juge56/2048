@@ -217,7 +217,7 @@ function setMode(mode) {
   sun.shadow.camera.updateProjectionMatrix();
   if (mode === 'edit') editor.enter(); else editor.exit();
   if (mode === 'menu') renderMenu();
-  if (mode === 'play') { $('b-edit').hidden = !app.fromEditor; sound.start(); }
+  if (mode === 'play') { $('b-edit').hidden = !app.fromEditor; sound.start(); } else sound.silence();
   keys.clear();
 }
 
@@ -355,6 +355,10 @@ addEventListener('keydown', (e) => {
 });
 addEventListener('keyup', (e) => keys.delete(e.code));
 addEventListener('blur', () => keys.clear());
+// no sound while the tab or app is in the background
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) sound.suspend(); else if (app.mode === 'play') sound.start();
+});
 function readInput() {
   const k = (...c) => c.some((x) => keys.has(x));
   inp.steer = clamp((k('KeyD', 'ArrowRight') ? 1 : 0) - (k('KeyA', 'ArrowLeft') ? 1 : 0) + inp.stick.x, -1, 1);
@@ -461,7 +465,6 @@ function updateRider(dt) {
     trail.last.copy(p.pos);
     trailPush(p.pos, bx, up, onSnow);
   }
-  sound.update(sp, p.carve, onSnow, !!p.rail);
 }
 
 function updateSpray(dt) {
@@ -533,6 +536,7 @@ function frame(now) {
       resetView();
     }
     updateRider(dt);
+    sound.update(player.vel.length(), player.carve, player.state === 'ground', !!player.rail);
     chaseCamera(dt);
     updateHud(dt);
   } else if (app.mode === 'edit') {
@@ -548,6 +552,7 @@ function frame(now) {
   for (const r of ranges) r.position.copy(camera.position);
   sun.target.position.copy(focus);
   sun.position.copy(focus).addScaledVector(sunDir, 300);
+  if (app.debugCamera) app.debugCamera(camera);
   renderer.render(scene, camera);
 }
 

@@ -184,7 +184,7 @@ export class Terrain {
       if (!cell) continue;
       for (let t = 0; t < cell.length; t += 4) {
         const dx = x - cell[t], dz = z - cell[t + 2], r = 0.3 + 0.3 * cell[t + 3];
-        if (dx * dx + dz * dz < r * r && y < cell[t + 1] + 5.5 * cell[t + 3]) return { x: cell[t], z: cell[t + 2] };
+        if (dx * dx + dz * dz < r * r && y < cell[t + 1] + 5.5 * cell[t + 3]) return { x: cell[t], z: cell[t + 2], r };
       }
     }
     return null;

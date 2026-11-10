@@ -111,18 +111,25 @@ export class Player {
     else if (this.grounded) this.stepGround(dt, inp, released);
     else this.stepAir(dt, inp);
 
-    const tree = this.terrain.hitTree(this.pos.x, this.pos.y, this.pos.z);
-    if (tree) {
-      const fast = this.vel.length() > 5;
-      tmp.set(this.pos.x - tree.x, 0, this.pos.z - tree.z).normalize();
-      this.pos.addScaledVector(tmp, 0.25);
-      this.vel.set(tmp.x * 2, this.vel.y * 0.2, tmp.z * 2);
-      if (fast) this.crash('Tree!');
-    }
+    if (this.collideTree() > 6) this.crash('Tree!');
     if (this.combo.length && this.grounded && !this.rail) {
       this.comboTimer -= dt;
       if (this.comboTimer <= 0) this.bank();
     }
+  }
+
+  // Push the rider clear of any trunk and deflect them around it, so nobody
+  // gets wedged. Returns how hard they hit it head-on, in m/s.
+  collideTree() {
+    const tree = this.terrain.hitTree(this.pos.x, this.pos.y, this.pos.z);
+    if (!tree) return 0;
+    tmp.set(this.pos.x - tree.x, 0, this.pos.z - tree.z);
+    const d = tmp.length();
+    if (d < 1e-3) tmp.set(1, 0, 0); else tmp.divideScalar(d);
+    this.pos.addScaledVector(tmp, tree.r + 0.05 - d);
+    const into = -(this.vel.x * tmp.x + this.vel.z * tmp.z);
+    if (into > 0) { this.vel.x += tmp.x * into * 1.15; this.vel.z += tmp.z * into * 1.15; }
+    return Math.max(into, 0);
   }
 
   stepGround(dt, inp, released) {
@@ -308,7 +315,7 @@ export class Player {
     this.pos.addScaledVector(v, dt);
     const h = T.height(this.pos.x, this.pos.z);
     if (this.pos.y < h) this.pos.y = h;
-    if (T.hitTree(this.pos.x, this.pos.y, this.pos.z)) v.multiplyScalar(-0.3);
+    this.collideTree();
     if (this.bail <= 0) {
       // back on your feet, pointing down the fall line
       this.pos.y = h;

@@ -51,6 +51,13 @@ export class Sound {
     this.edge.filter.frequency.setTargetAtTime(onRail ? 5200 : 2400 - carve * 1000, t, 0.05);
   }
 
+  // Cut the looping wind and edge noise, e.g. when leaving a ride.
+  silence() {
+    if (!this.ctx) return;
+    for (const l of [this.wind, this.edge]) { l.gain.gain.cancelScheduledValues(this.ctx.currentTime); l.gain.gain.setTargetAtTime(0, this.ctx.currentTime, 0.03); }
+  }
+  suspend() { if (this.ctx) this.ctx.suspend(); }
+
   _tone(type, f0, f1, dur, vol, delay = 0) {
     if (!this.ctx) return;
     const t = this.ctx.currentTime + delay;
