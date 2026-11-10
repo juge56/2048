@@ -64,6 +64,13 @@ button.on { background: #fff; color: #1b2a44; }
 #touch button.on { background: rgba(255, 225, 74, .8); color: #1b2a44; }
 #bjump { right: calc(22px + env(safe-area-inset-right)); bottom: calc(34px + env(safe-area-inset-bottom)); width: 96px; height: 96px; }
 #bgrab { right: calc(128px + env(safe-area-inset-right)); bottom: calc(22px + env(safe-area-inset-bottom)); width: 74px; height: 74px; }
+#bbrake { right: calc(30px + env(safe-area-inset-right)); bottom: calc(142px + env(safe-area-inset-bottom)); width: 66px; height: 66px; font-size: 12px !important; }
+.meter { position: relative; width: 150px; height: 8px; margin: 10px auto 0; border-radius: 4px; background: rgba(15, 45, 85, .5); border: 1px solid rgba(255, 255, 255, .5); }
+.meter i { position: absolute; inset: 0; border-radius: 3px; background: #ffe14a; transform-origin: left; }
+.meter b { position: absolute; top: -4px; width: 14px; height: 14px; margin-left: -7px; border-radius: 50%; background: #fff; }
+#balance::before { content: ""; position: absolute; left: 50%; top: -3px; bottom: -3px; width: 2px; margin-left: -1px; background: rgba(255, 255, 255, .7); }
+#balance.warn b { background: #ff5a6e; }
+.hint { font-size: 13px; font-weight: 600; opacity: .9; margin: 12px 8px 0; line-height: 1.45; }
 
 /* ---- menu ---- */
 #menu {

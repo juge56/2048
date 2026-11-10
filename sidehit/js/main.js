@@ -5,6 +5,7 @@ import { Player, airTricks } from './player.js';
 import { Rider } from './rider.js';
 import { Sound } from './audio.js';
 import { Editor } from './editor.js';
+import { MODES } from './player.js';
 import { BUILTIN, loadCustom, saveCustom, sanitizeMap, blankMap, newId, getBest, setBest, isBuiltin } from './maps.js';
 
 const DT = 1 / 120, TAU = Math.PI * 2;
@@ -189,6 +190,18 @@ const app = {
   rebuildGround() { setMap(app.map); editor.terrainChanged(); app.saved(); },
 };
 const editor = new Editor(app);
+
+// Arcade or Sim riding, remembered between visits
+function setRideMode(name) {
+  player.setMode(name);
+  try { localStorage.setItem('sidehit.mode', player.mode); } catch { /* storage blocked */ }
+  $('b-mode').textContent = 'Riding: ' + (player.mode === 'sim' ? 'Sim' : 'Arcade');
+  $('modehelp').textContent = player.mode === 'sim'
+    ? 'Sim: slower spins unless you wind up, landings must be lined up, catching an edge or losing balance on a rail is a fall.'
+    : 'Arcade: the board straightens itself before landing, and losing balance on a rail just drops you off.';
+}
+{ let saved = 'arcade'; try { saved = localStorage.getItem('sidehit.mode') || 'arcade'; } catch { /* storage blocked */ } setRideMode(MODES[saved] ? saved : 'arcade'); }
+$('b-mode').addEventListener('click', () => setRideMode(player.mode === 'sim' ? 'arcade' : 'sim'));
 scene.add(editor.marker);
 
 function setMap(map) {
@@ -337,7 +350,7 @@ $('b-mute').addEventListener('click', () => { $('b-mute').textContent = sound.to
 
 // ---------------------------------------------------------------- input ----
 const keys = new Set();
-const inp = { steer: 0, pitch: 0, jump: false, grab: '', stick: { x: 0, y: 0 }, tJump: false, tGrab: false };
+const inp = { steer: 0, pitch: 0, jump: false, brake: false, grab: '', stick: { x: 0, y: 0 }, tJump: false, tGrab: false, tBrake: false };
 addEventListener('keydown', (e) => {
   if (e.repeat || e.target.matches('input, textarea, select')) return;
   keys.add(e.code);
@@ -364,7 +377,8 @@ function readInput() {
   inp.steer = clamp((k('KeyD', 'ArrowRight') ? 1 : 0) - (k('KeyA', 'ArrowLeft') ? 1 : 0) + inp.stick.x, -1, 1);
   inp.pitch = clamp((k('KeyW', 'ArrowUp') ? 1 : 0) - (k('KeyS', 'ArrowDown') ? 1 : 0) + inp.stick.y, -1, 1);
   inp.jump = k('Space') || inp.tJump;
-  inp.grab = k('KeyQ') ? 'mute' : k('KeyE', 'ShiftLeft', 'ShiftRight') || inp.tGrab ? 'indy' : '';
+  inp.brake = k('KeyX', 'ShiftLeft', 'ShiftRight') || inp.tBrake;
+  inp.grab = k('KeyQ') ? 'mute' : k('KeyE') || inp.tGrab ? 'indy' : '';
 }
 {
   // virtual stick on the left half, buttons on the right
@@ -395,6 +409,7 @@ function readInput() {
   };
   hold($('bjump'), 'tJump');
   hold($('bgrab'), 'tGrab');
+  hold($('bbrake'), 'tBrake');
 }
 
 // --------------------------------------------------------------- camera ----
@@ -435,6 +450,7 @@ function setFov(f) {
   camera.updateProjectionMatrix();
 }
 
+const vis = { railOff: 0, press: 0 };
 const basis = new THREE.Matrix4(), bx = new THREE.Vector3(), bz = new THREE.Vector3(), f0 = new THREE.Vector3();
 function updateRider(dt) {
   const p = player, onSnow = p.state === 'ground';
@@ -446,13 +462,19 @@ function updateRider(dt) {
   basis.makeBasis(bx, up, bz);
   rider.root.quaternion.setFromRotationMatrix(basis);
   rider.root.position.copy(p.pos).addScaledVector(up, p.rail ? 0.09 : 0.03);
+  vis.railOff = damp(vis.railOff, p.rail ? p.railOff : 0, 12, dt);
+  rider.root.position.addScaledVector(bz, -vis.railOff);
+  // a press lifts one end of the board off the snow
+  vis.press = damp(vis.press, onSnow ? p.pressLocal : p.rail && Math.abs(inp.pitch) > 0.5 ? Math.sign(inp.pitch) : 0, 10, dt);
+  rider.body.rotation.x = vis.press * 0.3;
+  rider.body.position.y = -0.8 + Math.abs(Math.sin(vis.press * 0.3)) * 0.6;
   const sp = p.vel.length();
-  p.lean = damp(p.lean || 0, onSnow ? clamp(-p.yawRate * sp * 0.035, -0.6, 0.6) : 0, 8, dt);
+  p.lean = damp(p.lean || 0, p.rail ? p.bal * 0.45 : onSnow && !p.press ? clamp(-p.yawRate * sp * 0.035, -0.6, 0.6) : 0, 8, dt);
   rider.leanG.rotation.z = p.lean;
   rider.leanG.rotation.y = damp(rider.leanG.rotation.y, onSnow && p.braking && sp > 1 ? 1.1 : 0, 9, dt);
   rider.pivot.rotation.x = p.flip + p.tumble;
   rider.pose({
-    crouch: p.rail ? 0.35 + 0.4 * p.charge : onSnow ? Math.max(p.tuck ? 0.75 : 0.22 + Math.abs(p.lean) * 0.5, 0.25 + 0.75 * p.charge) : 0.55,
+    crouch: p.rail ? 0.35 + 0.5 * p.charge : onSnow ? Math.max(p.press ? 0.5 : p.tuck ? 0.75 : 0.22 + Math.abs(p.lean) * 0.5, 0.2 + 0.85 * p.charge) : 0.55,
     grab: p.air && p.air.time > 0.12 ? inp.grab : '',
     airborne: !!p.rail || (p.state === 'air' && p.air.time > 0.15), bail: p.bail > 0, time: p.time,
   }, dt);
@@ -482,7 +504,7 @@ function updateSpray(dt) {
 }
 
 // ------------------------------------------------------------------ hud ----
-const hud = { force: true, score: -1, best: -1, speed: -1, combo: '' };
+const hud = { force: true, score: -1, best: -1, speed: -1, combo: '', charge: 0, bal: null };
 function updateHud(dt) {
   const set = (key, value, el, fmt) => {
     if (hud[key] === value && !hud.force) return;
@@ -503,6 +525,14 @@ function updateHud(dt) {
     const [names, pts] = text.split('\n');
     $('tricks').textContent = names || '';
     $('points').textContent = pts || '';
+  }
+  // ollie charge and rail balance meters
+  const charge = Math.round(player.charge * 50) / 50, bal = player.rail ? Math.round(clamp(player.bal, -1, 1) * 50) / 50 : null;
+  if (charge !== hud.charge) { hud.charge = charge; $('charge').hidden = charge <= 0; $('chargefill').style.transform = `scaleX(${charge})`; }
+  if (bal !== hud.bal) {
+    hud.bal = bal;
+    $('balance').hidden = bal === null;
+    if (bal !== null) { $('baldot').style.left = 50 + bal * 50 + '%'; $('balance').classList.toggle('warn', Math.abs(bal) > 0.65); }
   }
   hud.force = false;
   if (flashTimer > 0 && (flashTimer -= dt) <= 0) $('flash').className = '';
