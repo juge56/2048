@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Coldsmoke</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#2f77d0">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<canvas id="view"></canvas>
+
+<div id="hud">
+  <div class="stat left">
+    <div class="label">Score</div>
+    <div class="value" id="score">0</div>
+    <div class="sub">Best <span id="best">0</span></div>
+  </div>
+  <div class="stat right">
+    <div class="value"><span id="speed">0</span><small>km/h</small></div>
+    <div class="sub"><span id="drop">0</span> m vertical</div>
+  </div>
+  <div id="combo">
+    <div id="flash"></div>
+    <div id="tricks"></div>
+    <div id="points"></div>
+  </div>
+  <div id="menu">
+    <button id="restart">Restart</button>
+    <button id="mute">Sound on</button>
+  </div>
+</div>
+
+<div id="touch">
+  <div id="stickzone"></div>
+  <div id="pad"><div id="nub"></div></div>
+  <button id="bgrab">Grab</button>
+  <button id="bjump">Jump</button>
+</div>
+
+<div id="title">
+  <div class="card">
+    <h1>Coldsmoke</h1>
+    <p class="tag">An endless mountain. Carve it, launch it, land it.</p>
+    <button id="go">Drop in</button>
+    <table class="keys desktop">
+      <tr><td><kbd>A</kbd> <kbd>D</kbd></td><td>Carve &middot; spin in the air</td></tr>
+      <tr><td><kbd>W</kbd> <kbd>S</kbd></td><td>Tuck / brake &middot; front / back flip in the air</td></tr>
+      <tr><td><kbd>Space</kbd></td><td>Hold to load, release to ollie</td></tr>
+      <tr><td><kbd>E</kbd> <kbd>Q</kbd></td><td>Grab (Indy / Mute)</td></tr>
+      <tr><td><kbd>R</kbd> <kbd>M</kbd></td><td>Restart &middot; mute</td></tr>
+    </table>
+    <table class="keys mobile">
+      <tr><td>Left thumb</td><td>Drag to carve, tuck and brake &middot; spin and flip in the air</td></tr>
+      <tr><td>Jump</td><td>Hold to load, release to ollie</td></tr>
+      <tr><td>Grab</td><td>Hold in the air</td></tr>
+    </table>
+    <p class="hint">Ollie onto the yellow rails to grind. Chain tricks before you settle to multiply the score. Let go of the controls before landing and the board straightens itself.</p>
+  </div>
+</div>
+
+<script type="module" src="main.js"></script>
+</body>
+</html>
