@@ -130,8 +130,9 @@ const spray = { pos: new Float32Array(SPRAY * 3).fill(-1e5), vel: new Float32Arr
 function puff(p, vx, vy, vz, spread) {
   const i = spray.next;
   spray.next = (i + 1) % SPRAY;
-  spray.pos.set([p.x, p.y + 0.1, p.z], i * 3);
-  spray.vel.set([vx + (Math.random() - 0.5) * spread, vy + Math.random() * spread * 0.6, vz + (Math.random() - 0.5) * spread], i * 3);
+  const k = i * 3;
+  spray.pos[k] = p.x; spray.pos[k + 1] = p.y + 0.1; spray.pos[k + 2] = p.z;
+  spray.vel[k] = vx + (Math.random() - 0.5) * spread; spray.vel[k + 1] = vy + Math.random() * spread * 0.6; spray.vel[k + 2] = vz + (Math.random() - 0.5) * spread;
   spray.life[i] = 0.5 + Math.random() * 0.5;
 }
 
@@ -151,6 +152,21 @@ const trail = { pos: new Float32Array(TRAIL * ACROSS * 3), col: new Float32Array
   trail.mesh.frustumCulled = false;
   scene.add(trail.mesh);
 }
+// A slice is drawn only if its neighbours touched the snow too; walls are fainter than the floor.
+function trailAlpha(i) {
+  const joined = trail.on[i] && (i === 0 || trail.on[i - 1]) && (i === TRAIL - 1 || trail.on[i + 1]);
+  const a = joined ? trail.on[i] * Math.min(i / 60, 1) : 0, k = i * ACROSS * 4, c = trail.col;
+  c[k + 3] = a * 0.5; c[k + 7] = a; c[k + 11] = a; c[k + 15] = a * 0.5;
+}
+function clearTrail() {
+  trail.on.fill(0);
+  const c = trail.col;
+  for (let i = 0; i < TRAIL; i++) for (let s = 0; s < ACROSS; s++) {
+    const k = (i * ACROSS + s) * 4, outer = s === 0 || s === ACROSS - 1;
+    c[k] = outer ? 1 : 0.43; c[k + 1] = outer ? 1 : 0.56; c[k + 2] = outer ? 1 : 0.82; c[k + 3] = 0;
+  }
+  trail.mesh.geometry.attributes.color.needsUpdate = true;
+}
 // depth 0..1: how hard the board is biting (0 = lifted off the snow)
 function trailPush(p, side, up, depth, deep) {
   const stride = ACROSS * 3;
@@ -165,15 +181,11 @@ function trailPush(p, side, up, depth, deep) {
     trail.pos[k + s * 3 + 2] = p.z + side.z * w + up.z * lift;
   }
   trail.on[TRAIL - 1] = depth > 0 ? 0.45 + 0.35 * depth + (deep ? 0.15 : 0) : 0;
-  for (let i = 0; i < TRAIL; i++) {
-    // a slice is drawn only if its neighbours touched the snow too
-    const joined = trail.on[i] && (i === 0 || trail.on[i - 1]) && (i === TRAIL - 1 || trail.on[i + 1]);
-    const a = joined ? trail.on[i] * Math.min(i / 60, 1) : 0;
-    for (let s = 0; s < ACROSS; s++) {
-      const outer = s === 0 || s === ACROSS - 1;
-      trail.col.set(outer ? [1, 1, 1, a * 0.5] : [0.43, 0.56, 0.82, a], (i * ACROSS + s) * 4);
-    }
-  }
+  trail.col.copyWithin(0, ACROSS * 4);
+  // only the newest two slices and the fading tail change opacity
+  for (let i = 0; i <= 60; i++) trailAlpha(i);
+  trailAlpha(TRAIL - 2);
+  trailAlpha(TRAIL - 1);
   trail.mesh.geometry.attributes.position.needsUpdate = true;
   trail.mesh.geometry.attributes.color.needsUpdate = true;
 }
@@ -229,7 +241,8 @@ function setGraphics(mode) {
   gfx.slow = 0;
   // Auto on a phone starts without shadows at a moderate resolution, then adapts
   setShadows(gfx.mode === 'high' || (gfx.mode === 'auto' && !touch));
-  setRatio(gfx.mode === 'low' ? 0.8 : gfx.mode === 'auto' && touch ? Math.min(1.1, MAX_RATIO) : MAX_RATIO);
+  setRatio(gfx.mode === 'low' ? 0.8 : gfx.mode === 'auto' && touch ? Math.min(1, MAX_RATIO) : MAX_RATIO);
+  gfx.drops = gfx.good = 0;
   sparkle.value = gfx.mode === 'low' ? 0 : (SKY[app.map && app.map.sky] || SKY.bluebird).glint;
   $('b-gfx').textContent = 'Graphics: ' + gfx.mode[0].toUpperCase() + gfx.mode.slice(1);
 }
@@ -238,14 +251,20 @@ function autoQuality(dt) {
   gfx.frames++;
   if (gfx.time < 1.5) return;
   const fps = gfx.frames / gfx.time;
+  gfx.fps = Math.round(fps);
   gfx.time = gfx.frames = 0;
   if (gfx.mode !== 'auto' || document.hidden) return;
   if (fps < 45) {
+    gfx.good = 0;
+    gfx.drops = (gfx.drops || 0) + 1;
     // first give up resolution, then shadows
     if (gfx.ratio > 0.85) setRatio(gfx.ratio - 0.15);
     else if (++gfx.slow >= 2 && sun.castShadow) setShadows(false);
     else if (gfx.ratio > 0.7) setRatio(gfx.ratio - 0.1);
-  } else if (fps > 57 && gfx.ratio < MAX_RATIO) setRatio(gfx.ratio + 0.1);
+  } else if (fps > 57 && gfx.ratio < MAX_RATIO && (gfx.drops || 0) < 3) {
+    // every resize costs a hitch, so only climb back after a long smooth spell, and give up after a few tries
+    if ((gfx.good = (gfx.good || 0) + 1) >= 5) { gfx.good = 0; setRatio(gfx.ratio + 0.1); }
+  }
 }
 // if the browser drops the graphics context (low memory), recover instead of leaving a blank page
 canvas.addEventListener('webglcontextlost', (e) => { e.preventDefault(); $('lost').hidden = false; });
@@ -324,7 +343,7 @@ function studioFrame(dt) {
   const o = studio.position, portrait = innerHeight > innerWidth;
   rider.root.position.set(o.x, o.y + 0.31, o.z);
   rider.root.rotation.set(0, turn.angle, 0);
-  rider.pose({ crouch: 0.16, time: performance.now() / 1000 }, dt);
+  rider.pose({ crouch: 0.18, time: performance.now() / 1000 }, dt);
   // the option bar covers the bottom of the screen, so aim low enough to keep the whole rider above it
   camera.position.set(o.x, o.y + 1.35, o.z + (portrait ? 6.3 : 4.9));
   camera.lookAt(o.x, o.y + (portrait ? 0.15 : 0.5), o.z);
@@ -419,7 +438,7 @@ function setMap(map) {
 function resetView() {
   cam.snap = true;
   cam.dir.set(Math.sin(player.yaw), 0, Math.cos(player.yaw));
-  trail.on.fill(0);
+  clearTrail();
   hud.force = true;
 }
 
@@ -554,7 +573,7 @@ $('b-mute').addEventListener('click', () => { $('b-mute').textContent = sound.to
 
 // ---------------------------------------------------------------- input ----
 const keys = new Set();
-const inp = { steer: 0, pitch: 0, jump: false, brake: false, grab: '', stick: { x: 0, y: 0 }, tJump: false, tGrab: false, tBrake: false };
+const inp = { steer: 0, pitch: 0, jump: false, brake: false, tuck: false, grab: '', stick: { x: 0, y: 0 }, tJump: false, tGrab: false, tBrake: false, tTuck: false };
 addEventListener('keydown', (e) => {
   if (e.repeat || e.target.matches('input, textarea, select')) return;
   keys.add(e.code);
@@ -582,6 +601,7 @@ function readInput() {
   inp.pitch = clamp((k('KeyW', 'ArrowUp') ? 1 : 0) - (k('KeyS', 'ArrowDown') ? 1 : 0) + inp.stick.y, -1, 1);
   inp.jump = k('Space') || inp.tJump;
   inp.brake = k('KeyX', 'ShiftLeft', 'ShiftRight') || inp.tBrake;
+  inp.tuck = k('KeyC', 'ControlLeft', 'ControlRight') || inp.tTuck;
   inp.grab = k('KeyQ') ? 'mute' : k('KeyE') || inp.tGrab ? 'indy' : '';
 }
 {
@@ -614,6 +634,7 @@ function readInput() {
   hold($('bjump'), 'tJump');
   hold($('bgrab'), 'tGrab');
   hold($('bbrake'), 'tBrake');
+  hold($('btuck'), 'tTuck');
 }
 
 // --------------------------------------------------------------- camera ----
@@ -681,7 +702,8 @@ function updateRider(dt) {
   rider.leanG.rotation.y = damp(rider.leanG.rotation.y, onSnow && p.braking && sp > 1 ? 1.1 : 0, 9, dt);
   rider.pivot.rotation.x = p.flip + p.tumble;
   rider.pose({
-    crouch: p.rail ? 0.35 + 0.5 * p.charge : onSnow ? Math.max(p.press ? 0.5 : p.tuck ? 0.7 : 0.18 + 0.12 * Math.min(sp / 20, 1) + Math.abs(p.lean) * 0.55, 0.2 + 0.85 * p.charge, p.absorb * 0.95) : 0.55,
+    crouch: p.rail ? 0.4 + 0.5 * p.charge : onSnow ? Math.max(p.press ? 0.45 : p.tuck ? 0.65 : 0.22 + 0.1 * Math.min(sp / 20, 1) + Math.abs(p.lean) * 0.5, 0.2 + 0.85 * p.charge, p.absorb * 0.95) : 0.6,
+    tuck: onSnow && p.tuck, edge: onSnow ? clamp(p.lean / 0.45, -1, 1) : 0, shift: vis.press * 0.85,
     grab: p.air && p.air.time > 0.12 ? inp.grab : '',
     airborne: !!p.rail || (p.state === 'air' && p.air.time > 0.15), bail: p.bail > 0, time: p.time,
   }, dt);
@@ -712,7 +734,7 @@ function updateSpray(dt) {
 }
 
 // ------------------------------------------------------------------ hud ----
-const hud = { force: true, score: -1, best: -1, speed: -1, combo: '', charge: 0, clock: -1 };
+const hud = { force: true, score: -1, best: -1, speed: -1, combo: '', charge: 0, clock: -1, fps: -1 };
 const clockText = (t) => Math.floor(t / 60) + ':' + String(Math.floor(t % 60)).padStart(2, '0');
 function updateHud(dt) {
   const set = (key, value, el, fmt) => {
@@ -738,6 +760,7 @@ function updateHud(dt) {
   const charge = Math.round(player.charge * 50) / 50;
   if (charge !== hud.charge) { hud.charge = charge; $('charge').hidden = charge <= 0; $('chargefill').style.transform = `scaleX(${charge})`; }
   set('clock', Math.floor(player.time), 'clock', clockText);
+  set('fps', gfx.fps || 0, 'fps', (v) => (v ? v + ' fps' : ''));
   hud.force = false;
   if (flashTimer > 0 && (flashTimer -= dt) <= 0) $('flash').className = '';
 }

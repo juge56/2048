@@ -58,7 +58,7 @@ export class Player {
   clear() {
     Object.assign(this, {
       yaw: 0, yawRate: 0, spinVel: 0, flip: 0, flipVel: 0, grounded: true, charge: 0, jumpHeld: false,
-      carve: 0, braking: false, tuck: false, tuckT: 0, wind: 0, sw: false,
+      carve: 0, braking: false, tuck: false, wind: 0, sw: false,
       press: 0, pressLocal: 0, pressT: 0, butter: 0, pressItem: null, slipT: 0,
       air: null, rail: null, railSeg: null, railS: 0, railV: 0, railCd: 0, railItem: null, railOff: 0, steerS: 0, absorb: 0,
       bail: 0, tumble: 0, comboTimer: 0, time: 0,
@@ -79,7 +79,7 @@ export class Player {
     const s = this.spawn;
     this.pos.set(s.x, this.terrain.height(s.x, s.z), s.z);
     this.yaw = s.yaw;
-    this.vel.set(Math.sin(s.yaw) * 1.2, 0, Math.cos(s.yaw) * 1.2);
+    this.vel.set(Math.sin(s.yaw) * 2, 0, Math.cos(s.yaw) * 2);
   }
 
   setSpawnHere() {
@@ -128,7 +128,7 @@ export class Player {
     for (let i = 0; i < 30; i++) this.hooks.puff(this.pos, this.vel.x * 0.4, 2, this.vel.z * 0.4, 6);
   }
 
-  // inp: { steer, pitch, jump, brake, grab }
+  // inp: { steer, pitch, jump, brake, tuck, grab }
   step(dt, inp) {
     this.time += dt;
     this.railCd -= dt;
@@ -231,21 +231,25 @@ export class Player {
     v.z += G * n.y * n.z * dt;
     let vf = v.dot(f3), vs = v.dot(s3);
     this.sw = vf < -1;
-    // tuck by itself when running straight
-    const straight = !loose && !this.braking && !inp.jump && Math.abs(inp.steer) < 0.15 && sp > 4;
-    this.tuckT = straight ? this.tuckT + dt : 0;
-    this.tuck = this.tuckT > 0.5;
+    // tucking is a choice: less drag, held with its own button
+    this.tuck = !!inp.tuck && !loose && !this.braking;
     this.carve = clamp(Math.abs(vs) * (loose ? 0.05 : 0.25) + Math.abs(this.yawRate * vf) * 0.03 + (this.braking ? Math.abs(vf) * 0.08 : 0), 0, 1);
     // on its edge the board holds: sideways slip bleeds off fast, forward glide barely at all
+    const before = Math.hypot(vf, vs);
     vs *= Math.exp(-(loose ? 0.4 : this.braking ? 3 : this.powder ? 5 : 9) * dt);
-    const dec = ((this.powder ? 0.0066 : this.tuck ? 0.0032 : 0.0044) * vf * vf + 0.035 * G * n.y + (loose ? 0 : Math.abs(this.yawRate * vf) * 0.06) + (this.braking ? 7 : 0)
+    // a carving edge redirects momentum, it doesn't throw it away: only a braking skid scrubs speed
+    if (!this.braking) {
+      const after = Math.hypot(vf, vs);
+      if (after > 1e-4) { vf *= before / after; vs *= before / after; }
+    }
+    const dec = ((this.powder ? (this.tuck ? 0.0044 : 0.0064) : this.tuck ? 0.0023 : 0.004) * vf * vf + 0.03 * G * n.y + (this.braking ? 7 : 0)
       // deep snow drags when you're slow and lets go as you plane on top of it
       + (this.powder ? 0.8 * Math.exp(-Math.abs(vf) / 5) : 0)) * dt;
     vf = Math.abs(vf) <= dec ? 0 : vf - Math.sign(vf) * dec;
     // never stuck: the rider shuffles forward at walking pace unless braking, and skates harder on request
     if (!this.braking && !this.press) {
       if (inp.pitch > 0.3 && Math.abs(vf) < 4) vf += (vf < -0.5 ? -1 : 1) * 4 * dt;
-      else if (Math.abs(vf) < 2.5) vf += (vf < -0.5 ? -1 : 1) * 2.2 * dt;
+      else if (Math.abs(vf) < 3.5) vf += (vf < -0.5 ? -1 : 1) * 3 * dt;
     }
     v.copy(f3).multiplyScalar(vf).addScaledVector(s3, vs);
 

@@ -118,6 +118,9 @@ export class Rider {
     this.grab = 0;
     this.air = 0;
     this.flail = 0;
+    this.tuck = 0;
+    this.edge = 0;
+    this.shift = 0;
     this.j = { hip: V(), neck: V(), sh: [V(), V()], elbow: [V(), V()], hand: [V(), V()], leg: [V(), V()], knee: [V(), V()], ankle: [V(), V()] };
     // per bone: rest origin, current origin, current rotation
     this.rest = [];
@@ -238,7 +241,7 @@ export class Rider {
     this.rot[bone].setFromUnitVectors(restDir, this._u.copy(to).sub(from).normalize());
   }
 
-  // t: { crouch 0..1, grab '' | 'indy' | 'mute', airborne, bail, time }
+  // t: { crouch 0..1, grab '' | 'indy' | 'mute', airborne, bail, tuck, edge -1..1 (heel..toe), shift -1..1 (tail..nose), time }
   pose(t, dt) {
     if (!this.skin) return;
     const grabbing = !!t.grab, j = this.j, at = this.at, rot = this.rot;
@@ -246,45 +249,55 @@ export class Rider {
     this.grab = damp(this.grab, grabbing ? 1 : 0, 14, dt);
     this.air = damp(this.air, t.airborne ? 1 : 0, 8, dt);
     this.flail = damp(this.flail, t.bail ? 1 : 0, 10, dt);
-    const c = this.crouch, time = t.time || 0;
+    this.tuck = damp(this.tuck, t.tuck ? 1 : 0, 9, dt);
+    this.edge = damp(this.edge, t.edge || 0, 8, dt);
+    this.shift = damp(this.shift, t.shift || 0, 9, dt);
+    const c = this.crouch, time = t.time || 0, k = this.tuck, e = this.edge, air = this.air, w = this.shift;
 
-    // spine: hips sink and move back as the rider crouches, the chest folds forward over the board
-    const hip = j.hip.set(0.04 + 0.14 * c, 0.84 - 0.36 * c, 0);
-    const fold = 0.2 + 0.55 * Math.min(c, 1.3);
-    const neck = j.neck.set(hip.x - Math.sin(fold) * LEN.spine, hip.y + Math.cos(fold) * LEN.spine, 0);
+    // Stance: knees bent and driven over the toes, hips stacked over the board, back fairly straight.
+    // Toe edge (e > 0) moves the hips toward the toes; heel edge sits them back. A press (w) slides them along the board.
+    const hip = j.hip.set(0.02 + 0.06 * c - 0.08 * e + 0.05 * k, 0.87 - 0.3 * c - 0.1 * k, 0.2 * w);
+    const fold = 0.1 + 0.28 * Math.min(c, 1.3) + 0.6 * k - 0.07 * e;
+    const neck = j.neck.set(hip.x - Math.sin(fold) * LEN.spine, hip.y + Math.cos(fold) * LEN.spine, hip.z + 0.1 * w);
     const up = this._w.set(0, 1, 0);
     this._aim(PELVIS, hip, neck, up);
-    // shoulders open toward the direction of travel, more so when standing tall
-    const open = 0.55 - 0.25 * Math.min(c, 1);
+    // shoulders turn a little toward the direction of travel, more in a tuck
+    const open = 0.38 + 0.3 * k;
     this._qa.setFromAxisAngle(up, open);
     at[CHEST].copy(hip);
     rot[CHEST].copy(rot[PELVIS]).multiply(this._qa);
-    // the head stays level and looks down the hill
+    // the head stays level and looks down the hill over the lead shoulder
     at[HEAD].copy(neck);
-    rot[HEAD].setFromAxisAngle(up, open + 0.7).premultiply(this._qb.setFromAxisAngle(this._p.set(0, 0, 1), fold * 0.35));
+    rot[HEAD].setFromAxisAngle(up, open + 0.85).premultiply(this._qb.setFromAxisAngle(this._p.set(0, 0, 1), fold * 0.25));
 
     const bend = this._c, down = this._q.set(0, -1, 0);
     for (let i = 0; i < 2; i++) {
       const s = i ? -1 : 1, side = this._p.set(0, 0, s);
-      // legs: hip sockets ride with the pelvis, ankles stay strapped to the board
+      // legs: hip sockets ride with the pelvis, ankles stay strapped to the board, knees track out over the toes
       j.leg[i].copy(REST.leg(s)).sub(REST.hip).applyQuaternion(rot[PELVIS]).add(hip);
       j.ankle[i].set(0.01, 0.165, s * 0.27);
-      this._ik(j.leg[i], j.ankle[i], LEN.thigh, LEN.shin, bend.set(-1, 0.25, s * 0.5), j.knee[i]);
+      this._ik(j.leg[i], j.ankle[i], LEN.thigh, LEN.shin, bend.set(-1, 0.1, s * 0.55), j.knee[i]);
       this._aim(THIGH + i, j.leg[i], j.knee[i], down);
       this._aim(SHIN + i, j.knee[i], j.ankle[i], down);
       at[FOOT + i].copy(j.ankle[i]);
       rot[FOOT + i].setFromAxisAngle(up, s * 0.2);
 
-      // arms: shoulders ride with the chest
+      // arms: shoulders ride with the chest. Riding: lead hand out over the nose, rear hand over the tail,
+      // both in front of the body at about waist height. In the air they lift and spread for balance.
       const sh = j.sh[i].copy(REST.shoulder(s)).sub(REST.hip).applyQuaternion(rot[CHEST]).add(hip), hand = j.hand[i];
-      hand.set(sh.x - 0.1 + s * 0.05, sh.y - 0.36 + 0.26 * this.air, sh.z + s * (0.16 + 0.2 * this.air));
+      hand.set(sh.x - 0.14 - 0.03 * s - 0.05 * air, sh.y - 0.27 + 0.2 * air, sh.z + s * 0.3 * (1 + 0.55 * air));
+      if (k > 0.01) {
+        // tuck: lead hand low in front, rear hand tucked behind the back
+        hand.lerp(s > 0 ? this._e.set(hip.x - 0.32, hip.y + 0.04, hip.z + 0.14) : this._e.set(hip.x + 0.17, hip.y + 0.12, hip.z - 0.08), k);
+      }
       if (this.flail > 0.01) {
         hand.x += this.flail * 0.3 * Math.sin(time * 17 + s);
         hand.y += this.flail * (0.4 + 0.3 * Math.sin(time * 13 + s * 2));
       }
       const g = this.grab * ((t.grab === 'mute') === (s === 1) ? 1 : 0);
       if (g > 0) hand.lerp(this._e.set(-0.17, 0.07, s * 0.03), g);
-      this._ik(sh, hand, LEN.upper, LEN.fore, bend.set(0.5, -0.35, s * 0.7), j.elbow[i]);
+      else if (this.grab > 0.01) { hand.y += 0.24 * this.grab; hand.z += s * 0.14 * this.grab; }   // the free arm goes up and out
+      this._ik(sh, hand, LEN.upper, LEN.fore, bend.set(0.35, -1, s * 0.25), j.elbow[i]);
       this._aim(UPPER + i, sh, j.elbow[i], side);
       this._aim(FORE + i, j.elbow[i], hand, side);
     }

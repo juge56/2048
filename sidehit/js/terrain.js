@@ -146,7 +146,7 @@ export class Terrain {
 
   base(x, z) {
     const m = this.map, s = m.seed;
-    let h = -m.slope * (ramp(z, -2, 26) - ramp(z, m.length - 40, 40));
+    let h = -m.slope * (ramp(z, -2, 18) - ramp(z, m.length - 40, 40));
     if (z < -4) h += (-z - 4) * 0.35;
     const fade = smooth((z - 10) / 40);
     h += m.bumps * fade * (2.6 * noise(x / 85, z / 85, s) + 0.5 * noise(x / 27, z / 27, s + 1));
