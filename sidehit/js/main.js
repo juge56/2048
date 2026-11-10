@@ -1,6 +1,6 @@
 // Sidehit — app shell: rendering, modes (menu / ride / edit), camera, HUD, input.
 import * as THREE from '../vendor/three.module.min.js';
-import { Terrain, sparkle } from './terrain.js';
+import { Terrain, sparkle, quality } from './terrain.js';
 import { Player, airTricks } from './player.js';
 import { Rider, LOOK_OPTIONS, sanitizeLook } from './rider.js';
 import { Sound } from './audio.js';
@@ -23,7 +23,8 @@ renderer.shadowMap.autoUpdate = false;   // refreshed every other frame, see the
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 
 const scene = new THREE.Scene();
-scene.fog = new THREE.Fog(0xffffff, 140, 720);
+const FOG_FAR = touch ? 540 : 720;   // phones draw a shorter distance
+scene.fog = new THREE.Fog(0xffffff, 140, FOG_FAR);
 const camera = new THREE.PerspectiveCamera(64, 1, 0.3, 6000);
 const hemi = new THREE.HemisphereLight(0xffffff, 0xffffff, 1);
 const sun = new THREE.DirectionalLight(0xffffff, 3);
@@ -102,7 +103,7 @@ function applySky(name) {
   hemi.groundColor.set(s.hemiGround);
   hemi.intensity = s.hemi;
   renderer.toneMappingExposure = s.exposure;
-  sparkle.value = s.glint;
+  sparkle.value = gfx.mode === 'low' ? 0 : s.glint;
   const z = new THREE.Color(s.zenith);
   tintRange(ranges[0], haze.clone().lerp(white, 0.6), haze.clone().lerp(z, 0.25));
   tintRange(ranges[1], haze.clone().lerp(white, 0.3), haze.clone().lerp(z, 0.4));
@@ -178,6 +179,7 @@ function trailPush(p, side, up, depth, deep) {
 }
 
 // ---------------------------------------------------------------- state ----
+if (touch) { quality.trees = 0.55; quality.treeSides = 5; }
 const sound = new Sound();
 const store = {
   get(key, fallback) { try { return JSON.parse(localStorage.getItem(key)) ?? fallback; } catch { return fallback; } },
@@ -185,6 +187,7 @@ const store = {
 };
 let look = sanitizeLook(store.get('sidehit.look', null));
 const rider = new Rider(look);
+rider.load('models/snowboarder/').catch(() => flash('Rider model failed to load', 'bad'));
 scene.add(rider.root);
 let flashTimer = 0;
 function flash(text, kind) {
@@ -210,18 +213,24 @@ const editor = new Editor(app);
 
 // Graphics: Auto scales the resolution to hold the frame rate; Low also drops shadows.
 const MAX_RATIO = Math.min(devicePixelRatio, touch ? 1.5 : 2);
-const gfx = { mode: 'auto', ratio: MAX_RATIO, time: 0, frames: 0 };
+const gfx = { mode: 'auto', ratio: MAX_RATIO, time: 0, frames: 0, slow: 0 };
 function setRatio(r) {
-  gfx.ratio = clamp(r, 0.6, MAX_RATIO);
+  gfx.ratio = clamp(r, 0.7, MAX_RATIO);
   renderer.setPixelRatio(gfx.ratio);
   renderer.setSize(innerWidth, innerHeight, false);
+}
+function setShadows(on) {
+  sun.castShadow = on;
+  renderer.shadowMap.needsUpdate = true;
 }
 function setGraphics(mode) {
   gfx.mode = ['auto', 'low', 'high'].includes(mode) ? mode : 'auto';
   store.set('sidehit.gfx', gfx.mode);
-  sun.castShadow = gfx.mode !== 'low';
-  renderer.shadowMap.needsUpdate = true;
-  setRatio(gfx.mode === 'low' ? Math.min(1, MAX_RATIO) : MAX_RATIO);
+  gfx.slow = 0;
+  // Auto on a phone starts without shadows at a moderate resolution, then adapts
+  setShadows(gfx.mode === 'high' || (gfx.mode === 'auto' && !touch));
+  setRatio(gfx.mode === 'low' ? 0.8 : gfx.mode === 'auto' && touch ? Math.min(1.1, MAX_RATIO) : MAX_RATIO);
+  sparkle.value = gfx.mode === 'low' ? 0 : (SKY[app.map && app.map.sky] || SKY.bluebird).glint;
   $('b-gfx').textContent = 'Graphics: ' + gfx.mode[0].toUpperCase() + gfx.mode.slice(1);
 }
 function autoQuality(dt) {
@@ -231,9 +240,17 @@ function autoQuality(dt) {
   const fps = gfx.frames / gfx.time;
   gfx.time = gfx.frames = 0;
   if (gfx.mode !== 'auto' || document.hidden) return;
-  if (fps < 45 && gfx.ratio > 0.6) setRatio(gfx.ratio - 0.15);
-  else if (fps > 57 && gfx.ratio < MAX_RATIO) setRatio(gfx.ratio + 0.1);
+  if (fps < 45) {
+    // first give up resolution, then shadows
+    if (gfx.ratio > 0.85) setRatio(gfx.ratio - 0.15);
+    else if (++gfx.slow >= 2 && sun.castShadow) setShadows(false);
+    else if (gfx.ratio > 0.7) setRatio(gfx.ratio - 0.1);
+  } else if (fps > 57 && gfx.ratio < MAX_RATIO) setRatio(gfx.ratio + 0.1);
 }
+// if the browser drops the graphics context (low memory), recover instead of leaving a blank page
+canvas.addEventListener('webglcontextlost', (e) => { e.preventDefault(); $('lost').hidden = false; });
+canvas.addEventListener('webglcontextrestored', () => { $('lost').hidden = true; renderer.shadowMap.needsUpdate = true; });
+$('lost').addEventListener('click', () => location.reload());
 $('b-gfx').addEventListener('click', () => setGraphics({ auto: 'low', low: 'high', high: 'auto' }[gfx.mode]));
 
 // ---- rider select: a showroom with the rider on a turntable ----
@@ -283,8 +300,8 @@ function showStudio(on) {
   app.terrain.group.visible = !on;
   sky.visible = trail.mesh.visible = spray.points.visible = !on;
   for (const r of ranges) r.visible = !on;
-  scene.fog.far = on ? 1e6 : 720;
-  scene.fog.near = on ? 1e5 : 140;
+  scene.fog.far = on ? 4000 : FOG_FAR;
+  scene.fog.near = on ? 2000 : 140;
   if (on) {
     // even showroom light, whatever the park's time of day
     sunDir.set(-0.45, 0.75, 0.55).normalize();
@@ -315,18 +332,19 @@ function studioFrame(dt) {
   cam.snap = true;
 }
 
-const LOOK_LABELS = { jacket: 'Jacket', jacket2: 'Trim', style: 'Cut', pants: 'Pants', headwear: 'Headwear', helmet: 'Lid colour', lens: 'Goggles', gloves: 'Gloves', skin: 'Skin', build: 'Build', board: 'Deck', board2: 'Art colour', boardArt: 'Design' };
-const LOOK_TABS = { Jacket: ['jacket', 'jacket2', 'style'], Pants: ['pants', 'gloves'], Head: ['headwear', 'helmet', 'lens', 'skin'], Board: ['board', 'board2', 'boardArt'], Body: ['build'] };
+const LOOK_LABELS = { jacket: 'Suit', jacket2: 'Trim', board: 'Deck', board2: 'Art colour', boardArt: 'Design' };
+const LOOK_TABS = { Suit: ['jacket', 'jacket2'], Board: ['board', 'board2', 'boardArt'] };
 const STYLES = [
-  ['Glacier', {}],
-  ['Sunset', { jacket: '#ff7a1a', jacket2: '#ff3d7f', style: 'two-tone', pants: '#7a1f3d', helmet: '#ffc928', lens: '#b44dff', board: '#ffc928', board2: '#ff3d7f', boardArt: 'split' }],
-  ['Night Shift', { jacket: '#1c1f28', jacket2: '#ff3d7f', style: 'stripe', pants: '#262b38', helmet: '#1c1f28', lens: '#22c7e8', board: '#1c1f28', board2: '#22c7e8', boardArt: 'bars' }],
-  ['Citrus', { jacket: '#ffc928', jacket2: '#f2f4f7', style: 'two-tone', pants: '#4a5d3a', headwear: 'beanie', helmet: '#ffc928', lens: '#3ddc84', gloves: '#f2f4f7', board: '#8be04e', board2: '#f2f4f7', boardArt: 'split' }],
-  ['Whiteout', { jacket: '#f2f4f7', jacket2: '#2f6fe0', style: 'stripe', pants: '#f2f4f7', helmet: '#f2f4f7', lens: '#f2f4f7', gloves: '#f2f4f7', board: '#f2f4f7', board2: '#1c1f28', boardArt: 'bars' }],
-  ['Grape Soda', { jacket: '#8a4fd8', jacket2: '#ffc928', style: 'two-tone', pants: '#3d5a80', headwear: 'beanie', helmet: '#ff3d7f', lens: '#ff8a1f', gloves: '#ffc928', board: '#2f6fe0', board2: '#ff3d7f', boardArt: 'solid' }],
+  ['Factory', {}],
+  ['Glacier', { jacket: '#12a5a0', jacket2: '#ffe14a', board: '#12a5a0', board2: '#f2f4f7', boardArt: 'split' }],
+  ['Sunset', { jacket: '#ff3d7f', jacket2: '#ffe14a', board: '#ffc928', board2: '#ff3d7f', boardArt: 'split' }],
+  ['Night Shift', { jacket: '#2a2f3d', jacket2: '#22c7e8', board: '#1c1f28', board2: '#22c7e8', boardArt: 'bars' }],
+  ['Citrus', { jacket: '#ffc928', jacket2: '#8be04e', board: '#8be04e', board2: '#f2f4f7', boardArt: 'split' }],
+  ['Whiteout', { jacket: '#d8dde6', jacket2: '#1c1f28', board: '#f2f4f7', board2: '#1c1f28', boardArt: 'bars' }],
+  ['Grape Soda', { jacket: '#8a4fd8', jacket2: '#ff3d7f', board: '#2f6fe0', board2: '#ff3d7f', boardArt: 'solid' }],
 ].map(([name, l]) => [name, sanitizeLook(l)]);
-const styleIndex = () => STYLES.findIndex(([, l]) => Object.keys(l).every((k) => k === 'skin' || k === 'build' || l[k] === look[k]));
-let lookTab = 'Jacket';
+const styleIndex = () => STYLES.findIndex(([, l]) => Object.keys(l).every((k) => l[k] === look[k]));
+let lookTab = 'Suit';
 function renderCustomizer() {
   const at = styleIndex();
   $('c-name').textContent = at < 0 ? 'Custom' : STYLES[at][0];
@@ -362,7 +380,7 @@ function applyLook() {
 }
 function stepStyle(d) {
   const at = styleIndex(), next = STYLES[((at < 0 ? (d > 0 ? -1 : 0) : at) + d + STYLES.length) % STYLES.length][1];
-  look = sanitizeLook({ ...next, skin: look.skin, build: look.build });   // a style changes the kit, not the person
+  look = sanitizeLook(next);
   applyLook();
 }
 $('c-prev').addEventListener('click', () => stepStyle(-1));
@@ -776,7 +794,7 @@ function frame(now) {
   sun.target.position.copy(focus);
   sun.position.copy(focus).addScaledVector(sunDir, 300);
   if (app.debugCamera) app.debugCamera(camera);
-  app.terrain.cull(camera.position, scene.fog.far + 40);
+  app.terrain.cull(camera.position, FOG_FAR + 40);
   if (sun.castShadow && (frameNo++ & 1) === 0) renderer.shadowMap.needsUpdate = true;
   autoQuality(dt);
   renderer.render(scene, camera);
@@ -786,4 +804,4 @@ setGraphics(store.get('sidehit.gfx', 'auto'));
 setMap(BUILTIN[0]);
 setMode('menu');
 requestAnimationFrame(frame);
-window.sidehit = { app, player, inp, editor, ride, edit, setMode };
+window.sidehit = { app, player, inp, editor, ride, edit, setMode, rider };

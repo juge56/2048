@@ -44,7 +44,7 @@ export function footprint(o) {
 }
 
 function treeGeometry(profile) {
-  const g = new THREE.LatheGeometry(profile.map((p) => new THREE.Vector2(p[0], p[1])), 7).toNonIndexed();
+  const g = new THREE.LatheGeometry(profile.map((p) => new THREE.Vector2(p[0], p[1])), quality.treeSides).toNonIndexed();
   g.computeVertexNormals();
   const pos = g.attributes.position, nor = g.attributes.normal, col = new Float32Array(pos.count * 3);
   for (let i = 0; i < pos.count; i += 3) {
@@ -56,6 +56,9 @@ function treeGeometry(profile) {
   g.setAttribute('color', new THREE.BufferAttribute(col, 3));
   return g;
 }
+
+// Detail settings the app may lower on slower devices, before the first terrain is built.
+export const quality = { trees: 1, treeSides: 7 };
 
 // Sun glints: tiny crystals that flash as the camera moves past them.
 export const sparkle = { value: 1 };
@@ -356,7 +359,7 @@ export class Terrain {
     for (let gz = Math.floor(z0 / T); gz * T < m.length + 150; gz++) for (let gx = Math.floor(x0 / T); gx * T < -x0; gx++) {
       const x = (gx + 0.15 + 0.7 * hash(gx, gz, m.seed + 21)) * T, z = (gz + 0.15 + 0.7 * hash(gx, gz, m.seed + 22)) * T;
       const d = Math.abs(x - centerX(m, z)), side = d - m.width / 2;
-      let p = side > 5 ? 0.5 * smooth((side - 5) / 15) : z < -16 || z > m.length + 70 ? 0.4 : 0;
+      let p = (side > 5 ? 0.5 * smooth((side - 5) / 15) : z < -16 || z > m.length + 70 ? 0.4 : 0) * quality.trees;
       if (!p && m.trees && side < -3 && z > 30 && z < m.length - 20 && !(z < 110 && d < 16)) {
         p = m.trees * 0.34 * smooth((noise(x / 60, z / 60, m.seed + 31) + 0.05) / 0.3);
       }

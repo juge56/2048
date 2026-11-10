@@ -174,3 +174,7 @@ select option { color: #1b2a44; }
 .lookrow .swatch.on { border-color: #fff; box-shadow: 0 0 0 3px #ffe14a; }
 #c-bar .row { margin-top: 8px; }
 @media (max-height: 520px) { #looks { min-height: 0; max-height: 96px; overflow-y: auto; touch-action: pan-y; } #c-head h2 { font-size: 40px; } .c-arrow { top: 22%; } }
+
+#lost { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 5; white-space: normal; max-width: 280px; padding: 16px 20px; border-radius: 14px; font-size: 14px; background: #ffe14a; color: #1b2a44; }
+.credit { font-size: 11px; opacity: .75; }
+.credit a { color: inherit; }
