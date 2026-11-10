@@ -54,6 +54,10 @@
       <button id="b-import">Import</button>
       <button id="b-mode">Riding: Arcade</button>
     </div>
+    <div class="row">
+      <button id="b-rider">Customize rider</button>
+      <button id="b-gfx">Graphics: Auto</button>
+    </div>
     <p id="modehelp" class="hint"></p>
     <table class="keys desktop">
       <tr><td><kbd>A</kbd> <kbd>D</kbd></td><td>Carve &middot; spin in the air &middot; swing the board on rails</td></tr>
@@ -102,6 +106,7 @@
       <button id="lower" title="Lower">▼</button>
       <button id="higher" title="Higher">▲</button>
       <button id="shape">Shape</button>
+      <button id="lip">Lip on</button>
       <button id="dup">Copy</button>
       <button id="del" class="danger">Delete</button>
     </div>
@@ -116,6 +121,17 @@
       <button data-tool="tree">Tree</button>
       <button data-tool="spawn">Start</button>
       <span id="count"></span>
+    </div>
+  </div>
+</div>
+
+<!-- rider customizer -->
+<div id="custom">
+  <div class="panel">
+    <div id="looks"></div>
+    <div class="row">
+      <button id="b-random">Randomize</button>
+      <button id="b-lookdone" class="primary">Done</button>
     </div>
   </div>
 </div>

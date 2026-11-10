@@ -11,6 +11,7 @@
 //   s   size step for kickers, jumps and rollers; scale for trees
 //   k   shape of a rail (straight, rainbow, z, kink) or box (straight, wide, flatdown)
 //   len, h   length and height above the snow for rails and boxes
+//   lip      false to leave out the snow take-off in front of a rail or box
 
 export const SKIES = ['bluebird', 'golden', 'dusk'];
 export const TYPES = ['kicker', 'jump', 'roller', 'rail', 'box', 'tree'];
@@ -39,6 +40,7 @@ export function sanitizeObject(o, map) {
     out.len = num(o.len, 6, 40, 14);
     out.h = num(o.h, 0.3, 1.5, 0.5);
     out.k = SHAPES[o.t].includes(o.k) ? o.k : 'straight';
+    if (o.lip === false) out.lip = false;   // lips are on unless switched off
   }
   return out;
 }

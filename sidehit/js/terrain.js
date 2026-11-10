@@ -73,7 +73,7 @@ function addSparkle(material) {
         vec3 toEye = cameraPosition - vSnowPos;
         float dist = length(toEye);
         vec3 cell = floor(vec3(vSnowPos.xz * 26.0, 0.0)) + floor(vec3(normalize(toEye).xz * 34.0, 1.0)).xzy;
-        float glint = step(0.9935, snowHash(cell)) * smoothstep(34.0, 3.0, dist) * uSparkle;
+        float glint = step(0.9935, snowHash(cell)) * smoothstep(34.0, 8.0, dist) * smoothstep(2.0, 5.0, dist) * uSparkle;
         outgoingLight += vec3(1.0, 0.97, 0.9) * glint * 1.6;
         #include <opaque_fragment>`);
   };
@@ -237,6 +237,15 @@ export class Terrain {
       }
     }
     for (const o of this.map.objects) if (o.t === 'rail' || o.t === 'box') this.rails.push(this.railPath(o));
+    // each rail gets a small take-off that ends just short of it, at rail height, so you can ride straight on
+    for (const r of this.rails) {
+      const o = r.o;
+      if (o.lip === false) continue;
+      const H = Math.max(o.h - 0.08, 0.2), L = Math.max(3.2, H * 5.5), w = (r.width || 0.4) + 2.6, back = L + 0.5;
+      const sin = Math.sin(o.r), cos = Math.cos(o.r);
+      r.lip = { o: null, type: 'kicker', x: o.x - sin * back, z: o.z - cos * back, sin, cos, H, len: L, hw: w / 2, T: L, D: 0, R: 0, edge: 1, rad2: (L + 3) ** 2 + (w / 2) ** 2 };
+      this.bumps.push(r.lip);
+    }
   }
 
   // A rail or box as a chain of straight segments the rider slides along.
@@ -297,7 +306,6 @@ export class Terrain {
     for (let j = 0; j < nz + 3; j++) for (let i = 0; i < M; i++) hs[j * M + i] = this.base(x0 + (i - 1) * STEP, z0 + (j - 1) * STEP);
     const count = W * (nz + 1);
     const pos = new Float32Array(count * 3), nor = new Float32Array(count * 3), col = new Float32Array(count * 3), uv = new Float32Array(count * 2);
-    const idx = new Uint32Array(nx * nz * 6);
     for (let j = 0; j <= nz; j++) {
       const z = z0 + j * STEP, c = centerX(m, z);
       for (let i = 0; i <= nx; i++) {
@@ -317,21 +325,29 @@ export class Terrain {
         uv[v * 2] = (x - c) / 0.45; uv[v * 2 + 1] = z / 6;
       }
     }
-    let n = 0;
-    for (let j = 0; j < nz; j++) for (let i = 0; i < nx; i++) {
-      const p = j * W + i, q = p + 1, r = p + W, s = r + 1;
-      idx[n++] = p; idx[n++] = r; idx[n++] = q; idx[n++] = q; idx[n++] = r; idx[n++] = s;
+    // split into bands down the hill so off-screen and far-off snow is skipped
+    const attrs = { position: new THREE.BufferAttribute(pos, 3), normal: new THREE.BufferAttribute(nor, 3), color: new THREE.BufferAttribute(col, 3), uv: new THREE.BufferAttribute(uv, 2) };
+    this.chunks = [];
+    const BAND = 24;
+    for (let j0 = 0; j0 < nz; j0 += BAND) {
+      const j1 = Math.min(j0 + BAND, nz), idx = new Uint32Array(nx * (j1 - j0) * 6);
+      let n = 0, lo = Infinity, hi = -Infinity;
+      for (let j = j0; j < j1; j++) for (let i = 0; i < nx; i++) {
+        const p = j * W + i, q = p + 1, r = p + W, s = r + 1;
+        idx[n++] = p; idx[n++] = r; idx[n++] = q; idx[n++] = q; idx[n++] = r; idx[n++] = s;
+      }
+      for (let j = j0; j <= j1; j++) for (let i = 0; i <= nx; i += 3) { const y = pos[(j * W + i) * 3 + 1]; if (y < lo) lo = y; if (y > hi) hi = y; }
+      const g = new THREE.BufferGeometry();
+      for (const k in attrs) g.setAttribute(k, attrs[k]);
+      g.setIndex(new THREE.BufferAttribute(idx, 1));
+      g.boundingSphere = new THREE.Sphere(new THREE.Vector3(x0 + (nx * STEP) / 2, (lo + hi) / 2, z0 + ((j0 + j1) / 2) * STEP), Math.hypot((nx * STEP) / 2, ((j1 - j0) * STEP) / 2, (hi - lo) / 2) + 4);
+      const mesh = new THREE.Mesh(g, m.powder ? a.powder : a.snow);
+      mesh.receiveShadow = true;
+      this.group.add(mesh);
+      this.chunks.push(mesh);
+      this.own.push(g);
     }
-    const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-    g.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
-    g.setAttribute('color', new THREE.BufferAttribute(col, 3));
-    g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
-    g.setIndex(new THREE.BufferAttribute(idx, 1));
-    this.ground = new THREE.Mesh(g, m.powder ? a.powder : a.snow);
-    this.ground.receiveShadow = true;
-    this.group.add(this.ground);
-    this.own.push(g);
+    this.vertexCount = count;
 
     // forest around the run, plus trees scattered inside it where the map asks for them;
     // each tree is x, y, z, scale, kind
@@ -347,22 +363,35 @@ export class Terrain {
       if (hash(gx, gz, m.seed + 24) < p) f.push(x, this.base(x, z), z, 0.75 + hash(gx, gz, m.seed + 25) * 0.9, hash(gx, gz, m.seed + 26) < 0.35 ? 1 : 0);
     }
     const mat = new THREE.Matrix4(), q = new THREE.Quaternion(), v = new THREE.Vector3(), s = new THREE.Vector3();
-    this.forestMeshes = a.trees.map((geo, kind) => {
-      let total = 0;
-      for (let t = 0; t < f.length; t += F) if (f[t + 4] === kind) total++;
-      const inst = new THREE.InstancedMesh(geo, a.treeMat, total);
-      for (let t = 0, i = 0; t < f.length; t += F) {
-        if (f[t + 4] !== kind) continue;
+    const buckets = new Map();
+    for (let t = 0; t < f.length; t += F) {
+      const key = Math.floor(f[t + 2] / 110) * 2 + f[t + 4];
+      if (!buckets.has(key)) buckets.set(key, []);
+      buckets.get(key).push(t);
+    }
+    this.forestMeshes = [];
+    for (const [key, list] of buckets) {
+      const inst = new THREE.InstancedMesh(a.trees[((key % 2) + 2) % 2], a.treeMat, list.length);
+      list.forEach((t, i) => {
         q.setFromAxisAngle(UP, hash(t, 1, 2) * 6.28);
         mat.compose(v.set(f[t], f[t + 1], f[t + 2]), q, s.set(f[t + 3], f[t + 3] * (0.9 + 0.3 * hash(t, 3, 4)), f[t + 3]));
-        inst.setMatrixAt(i++, mat);
-      }
+        inst.setMatrixAt(i, mat);
+      });
       inst.castShadow = inst.receiveShadow = true;
-      inst.frustumCulled = false;
+      inst.computeBoundingSphere();
       this.group.add(inst);
-      return inst;
-    });
+      this.forestMeshes.push(inst);
+      this.chunks.push(inst);
+    }
     if (!m.powder) this.buildFence();
+  }
+
+  // Hide whatever is beyond the fog. Frustum culling handles the rest.
+  cull(eye, far) {
+    for (const c of this.chunks) {
+      const b = c.boundingSphere || c.geometry.boundingSphere;
+      c.visible = b.center.distanceTo(eye) - b.radius < far;
+    }
   }
 
   // Orange safety netting down both sides of a groomed run.
@@ -434,7 +463,11 @@ export class Terrain {
       m.scale.setScalar(o.s);
       m.rotation.y = hash(o.x * 10, o.z * 10, 5) * 6.28;
       m.castShadow = m.receiveShadow = true;
-    } else if (o.t === 'rail' || o.t === 'box') m = this.railMesh(this.rails.find((r) => r.o === o));
+    } else if (o.t === 'rail' || o.t === 'box') {
+      const r = this.rails.find((x) => x.o === o);
+      m = this.railMesh(r);
+      if (r.lip) m.add(this.bumpMesh(r.lip));
+    }
     else m = this.bumpMesh(this.bumps.find((b) => b.o === o));
     this.meshOf.set(o, m);
     this.objects.add(m);
@@ -481,7 +514,9 @@ export class Terrain {
   railMesh(r) {
     const a = this.a, group = new THREE.Group(), o = r.o;
     const tint = Math.floor(hash(o.x * 7, o.z * 7, 12) * RAIL_COLOURS.length);
-    const add = (geo, mat, shadow = true) => { const m = new THREE.Mesh(geo, mat); m.castShadow = shadow; group.add(m); return m; };
+    // parts are collected and baked into one mesh per material: far fewer draw calls
+    const parts = [];
+    const add = (geo, mat) => { const part = new THREE.Object3D(); parts.push({ geo, mat, part }); return part; };
     const tube = (p, q, rad, mat) => {
       const m = add(a.tube, mat), d = q.clone().sub(p), len = d.length();
       m.position.copy(p).addScaledVector(d, 0.5);
@@ -502,7 +537,7 @@ export class Terrain {
         body.scale.set(r.width, 0.34, sg.len + 0.02);
         body.quaternion.copy(q);
         body.position.copy(p).y -= 0.19;
-        const sheet = add(a.cube, a.boxTop, false);
+        const sheet = add(a.cube, a.boxTop);
         sheet.scale.set(r.width - 0.1, 0.03, sg.len);
         sheet.quaternion.copy(q);
         sheet.position.copy(p).y -= 0.012;
@@ -527,11 +562,36 @@ export class Terrain {
           foot.y = this.base(foot.x, foot.z) - 0.05;
           if (r.wide) top.copy(foot).setY(p.y - 0.3); else top.copy(p).setY(p.y - 0.04);
           if (top.y - foot.y > 0.05) tube(foot, top, r.wide ? 0.05 : 0.03, a.steel);
-          const pad = add(a.cube, a.steel, false);
+          const pad = add(a.cube, a.steel);
           pad.scale.set(0.22, 0.03, 0.22);
           pad.position.copy(foot).y += 0.07;
         }
       }
+    }
+    const baked = new Map(), v = new THREE.Vector3(), nm = new THREE.Matrix3();
+    for (const { geo, mat, part } of parts) {
+      part.updateMatrix();
+      nm.getNormalMatrix(part.matrix);
+      let b = baked.get(mat);
+      if (!b) baked.set(mat, (b = { pos: [], nor: [], idx: [] }));
+      const start = b.pos.length / 3, P = geo.attributes.position, N = geo.attributes.normal;
+      for (let i = 0; i < P.count; i++) {
+        v.fromBufferAttribute(P, i).applyMatrix4(part.matrix);
+        b.pos.push(v.x, v.y, v.z);
+        v.fromBufferAttribute(N, i).applyMatrix3(nm).normalize();
+        b.nor.push(v.x, v.y, v.z);
+      }
+      for (let i = 0; i < geo.index.count; i++) b.idx.push(start + geo.index.getX(i));
+    }
+    for (const [mat, b] of baked) {
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.Float32BufferAttribute(b.pos, 3));
+      g.setAttribute('normal', new THREE.Float32BufferAttribute(b.nor, 3));
+      g.setIndex(b.idx);
+      const mesh = new THREE.Mesh(g, mat);
+      mesh.castShadow = true;
+      mesh.userData.own = true;
+      group.add(mesh);
     }
     return group;
   }

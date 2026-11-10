@@ -52,6 +52,7 @@ export class Editor {
     act('bigger', (o) => this.resize(o, 1));
     act('lower', (o) => { o.h = clamp(Math.round((o.h - 0.1) * 10) / 10, 0.3, 1.5); });
     act('higher', (o) => { o.h = clamp(Math.round((o.h + 0.1) * 10) / 10, 0.3, 1.5); });
+    act('lip', (o) => { if (o.lip === false) delete o.lip; else o.lip = false; });
     act('shape', (o) => { const all = SHAPES[o.t]; if (all) o.k = all[(all.indexOf(o.k) + 1) % all.length]; });
     $('dup').addEventListener('click', () => {
       if (!this.sel || this.map.objects.length >= MAX_OBJECTS) return;
@@ -156,7 +157,8 @@ export class Editor {
     $('selinfo').textContent = info;
     const rail = o.t === 'rail' || o.t === 'box';
     for (const id of ['rotl', 'rotr']) $(id).hidden = o.t === 'tree';
-    for (const id of ['lower', 'higher', 'shape']) $(id).hidden = !rail;
+    for (const id of ['lower', 'higher', 'shape', 'lip']) $(id).hidden = !rail;
+    $('lip').textContent = o.lip === false ? 'Lip off' : 'Lip on';
   }
 
   ground(e) {

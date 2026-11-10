@@ -2,7 +2,7 @@
 import * as THREE from '../vendor/three.module.min.js';
 import { Terrain, sparkle } from './terrain.js';
 import { Player, airTricks } from './player.js';
-import { Rider } from './rider.js';
+import { Rider, LOOK_OPTIONS, sanitizeLook } from './rider.js';
 import { Sound } from './audio.js';
 import { Editor } from './editor.js';
 import { MODES } from './player.js';
@@ -17,9 +17,9 @@ const damp = (a, b, rate, dt) => a + (b - a) * (1 - Math.exp(-rate * dt));
 // ---------------------------------------------------------------- scene ----
 const canvas = $('view');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: !touch, powerPreference: 'high-performance' });
-renderer.setPixelRatio(Math.min(devicePixelRatio, touch ? 1.5 : 2));
 renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.shadowMap.type = touch ? THREE.PCFShadowMap : THREE.PCFSoftShadowMap;
+renderer.shadowMap.autoUpdate = false;   // refreshed every other frame, see the loop
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 
 const scene = new THREE.Scene();
@@ -179,7 +179,12 @@ function trailPush(p, side, up, depth, deep) {
 
 // ---------------------------------------------------------------- state ----
 const sound = new Sound();
-const rider = new Rider();
+const store = {
+  get(key, fallback) { try { return JSON.parse(localStorage.getItem(key)) ?? fallback; } catch { return fallback; } },
+  set(key, value) { try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* storage blocked */ } },
+};
+let look = sanitizeLook(store.get('sidehit.look', null));
+const rider = new Rider(look);
 scene.add(rider.root);
 let flashTimer = 0;
 function flash(text, kind) {
@@ -202,6 +207,67 @@ const app = {
   rebuildGround() { setMap(app.map); editor.terrainChanged(); app.saved(); },
 };
 const editor = new Editor(app);
+
+// Graphics: Auto scales the resolution to hold the frame rate; Low also drops shadows.
+const MAX_RATIO = Math.min(devicePixelRatio, touch ? 1.5 : 2);
+const gfx = { mode: 'auto', ratio: MAX_RATIO, time: 0, frames: 0 };
+function setRatio(r) {
+  gfx.ratio = clamp(r, 0.6, MAX_RATIO);
+  renderer.setPixelRatio(gfx.ratio);
+  renderer.setSize(innerWidth, innerHeight, false);
+}
+function setGraphics(mode) {
+  gfx.mode = ['auto', 'low', 'high'].includes(mode) ? mode : 'auto';
+  store.set('sidehit.gfx', gfx.mode);
+  sun.castShadow = gfx.mode !== 'low';
+  renderer.shadowMap.needsUpdate = true;
+  setRatio(gfx.mode === 'low' ? Math.min(1, MAX_RATIO) : MAX_RATIO);
+  $('b-gfx').textContent = 'Graphics: ' + gfx.mode[0].toUpperCase() + gfx.mode.slice(1);
+}
+function autoQuality(dt) {
+  gfx.time += dt;
+  gfx.frames++;
+  if (gfx.time < 1.5) return;
+  const fps = gfx.frames / gfx.time;
+  gfx.time = gfx.frames = 0;
+  if (gfx.mode !== 'auto' || document.hidden) return;
+  if (fps < 45 && gfx.ratio > 0.6) setRatio(gfx.ratio - 0.15);
+  else if (fps > 57 && gfx.ratio < MAX_RATIO) setRatio(gfx.ratio + 0.1);
+}
+$('b-gfx').addEventListener('click', () => setGraphics({ auto: 'low', low: 'high', high: 'auto' }[gfx.mode]));
+
+// ---- rider customizer ----
+const LOOK_LABELS = { jacket: 'Jacket', jacket2: 'Trim', style: 'Jacket style', pants: 'Pants', headwear: 'Headwear', helmet: 'Helmet / beanie', lens: 'Goggles', gloves: 'Gloves', skin: 'Skin', build: 'Build', board: 'Board', board2: 'Board art', boardArt: 'Board design' };
+function renderCustomizer() {
+  const box = $('looks');
+  box.textContent = '';
+  for (const key in LOOK_OPTIONS) {
+    const row = document.createElement('div'), label = document.createElement('span'), opts = document.createElement('div');
+    row.className = 'lookrow';
+    label.textContent = LOOK_LABELS[key];
+    for (const value of LOOK_OPTIONS[key]) {
+      const b = document.createElement('button');
+      if (value[0] === '#') { b.className = 'swatch'; b.style.background = value; b.setAttribute('aria-label', LOOK_LABELS[key] + ' ' + value); }
+      else b.textContent = value;
+      if (look[key] === value) b.classList.add('on');
+      b.addEventListener('click', () => { look = sanitizeLook({ ...look, [key]: value }); applyLook(); });
+      opts.append(b);
+    }
+    row.append(label, opts);
+    box.append(row);
+  }
+}
+function applyLook() {
+  rider.setLook(look);
+  store.set('sidehit.look', look);
+  renderCustomizer();
+}
+$('b-rider').addEventListener('click', () => { renderCustomizer(); setMode('custom'); });
+$('b-lookdone').addEventListener('click', () => setMode('menu'));
+$('b-random').addEventListener('click', () => {
+  look = sanitizeLook(Object.fromEntries(Object.entries(LOOK_OPTIONS).map(([k, v]) => [k, v[Math.floor(Math.random() * v.length)]])));
+  applyLook();
+});
 
 // Arcade or Sim riding, remembered between visits
 function setRideMode(name) {
@@ -554,6 +620,7 @@ function updateHud(dt) {
 
 // ----------------------------------------------------------------- loop ----
 function resize() {
+  renderer.setPixelRatio(gfx.ratio);
   renderer.setSize(innerWidth, innerHeight, false);
   camera.aspect = innerWidth / innerHeight;
   camera.updateProjectionMatrix();
@@ -562,7 +629,7 @@ addEventListener('resize', resize);
 resize();
 if (touch) document.body.classList.add('touch');
 
-let last = performance.now(), acc = 0;
+let last = performance.now(), acc = 0, frameNo = 0;
 function frame(now) {
   requestAnimationFrame(frame);
   const dt = Math.min((now - last) / 1000, 0.1);
@@ -588,6 +655,17 @@ function frame(now) {
   } else if (app.mode === 'edit') {
     editor.update();
     focus = editor.target;
+  } else if (app.mode === 'custom') {
+    // slow turntable around the rider
+    updateRider(dt);
+    cam.orbit += dt * 0.5;
+    const p = player.pos, portrait = innerHeight > innerWidth;
+    camera.position.set(p.x + Math.sin(cam.orbit) * 3.6, p.y + 1.5, p.z + Math.cos(cam.orbit) * 3.6);
+    // on a wide screen the panel sits on the left, so frame the rider to the right of it
+    const shift = portrait ? 0 : 0.9;
+    camera.lookAt(p.x - Math.cos(cam.orbit) * shift, p.y + (portrait ? 0.35 : 0.85), p.z + Math.sin(cam.orbit) * shift);
+    setFov(portrait ? 46 : 34);
+    cam.snap = true;
   } else {
     updateRider(dt);
     menuCamera(dt);
@@ -600,9 +678,13 @@ function frame(now) {
   sun.target.position.copy(focus);
   sun.position.copy(focus).addScaledVector(sunDir, 300);
   if (app.debugCamera) app.debugCamera(camera);
+  app.terrain.cull(camera.position, scene.fog.far + 40);
+  if (sun.castShadow && (frameNo++ & 1) === 0) renderer.shadowMap.needsUpdate = true;
+  autoQuality(dt);
   renderer.render(scene, camera);
 }
 
+setGraphics(store.get('sidehit.gfx', 'auto'));
 setMap(BUILTIN[0]);
 setMode('menu');
 requestAnimationFrame(frame);

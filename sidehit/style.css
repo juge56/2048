@@ -21,7 +21,8 @@ button.danger { color: #ffb3bd; }
 button.on { background: #fff; color: #1b2a44; }
 
 /* which layer shows in which mode */
-#hud, #touch, #menu, #editor { display: none; }
+#hud, #touch, #menu, #editor, #custom { display: none; }
+[data-mode="custom"] #custom { display: block; }
 [data-mode="play"] #hud, [data-mode="menu"] #menu, [data-mode="edit"] #editor { display: block; }
 [data-mode="play"].touch #touch { display: block; }
 
@@ -138,3 +139,15 @@ select option { color: #1b2a44; }
 #dlg textarea { width: 100%; height: 150px; font-family: ui-monospace, Menlo, monospace; font-size: 11px; resize: none; }
 #dlg-err { min-height: 16px; color: #ffe14a; margin-top: 8px !important; }
 #dlg .row { margin-top: 4px; }
+
+/* ---- rider customizer ---- */
+#custom { position: fixed; left: 0; right: 0; bottom: 0; padding: 8px 8px calc(8px + env(safe-area-inset-bottom)); pointer-events: none; }
+#custom .panel { pointer-events: auto; max-width: 560px; margin: 0 auto; max-height: 46vh; display: flex; flex-direction: column; padding: 10px 12px; }
+#looks { overflow-y: auto; touch-action: pan-y; }
+.lookrow { display: flex; align-items: center; gap: 10px; padding: 5px 0; }
+.lookrow > span { flex: 0 0 96px; font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; opacity: .9; }
+.lookrow > div { display: flex; gap: 6px; flex-wrap: wrap; }
+.lookrow button { padding: 6px 11px; }
+.lookrow .swatch { width: 30px; height: 30px; padding: 0; border-radius: 50%; border: 2px solid rgba(255, 255, 255, .45); }
+.lookrow .swatch.on { border-color: #fff; box-shadow: 0 0 0 2px #ffe14a; }
+@media (min-width: 900px) { #custom { right: auto; top: 0; display: none; align-items: center; } [data-mode="custom"] #custom { display: flex; } #custom .panel { max-height: 86vh; width: 420px; margin: 0 0 0 24px; } }

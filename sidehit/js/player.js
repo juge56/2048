@@ -314,10 +314,10 @@ export class Player {
     a.flip += this.flipVel * dt;
     if (inp.grab && a.time > 0.12) { a.grab += dt; a.grabName = inp.grab; }
 
-    if (this.railCd <= 0 && a.time > 0.06 && v.y < 3) {
+    if (this.railCd <= 0 && a.time > 0.02 && v.y < 4) {
       for (const r of this.terrain.rails) for (const sg of r.segs) {
         const t = tmp.copy(this.pos).sub(sg.p0).dot(sg.dir), along = sg.s0 + t;
-        if (t < 0 || t > sg.len || along < 0.2 || along > r.total - 0.5) continue;
+        if (t < 0 || t > sg.len || along > r.total - 0.5) continue;
         tmp2.copy(sg.p0).addScaledVector(sg.dir, t);
         const dy = this.pos.y - tmp2.y;
         if (Math.hypot(this.pos.x - tmp2.x, this.pos.z - tmp2.z) > r.reach || dy > 0.8 || dy < -0.5) continue;
