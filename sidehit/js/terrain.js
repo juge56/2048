@@ -43,18 +43,65 @@ export function footprint(o) {
   return { x: o.x + sin * half, z: o.z + cos * half, rad };
 }
 
-function treeGeometry(profile) {
-  const g = new THREE.LatheGeometry(profile.map((p) => new THREE.Vector2(p[0], p[1])), quality.treeSides).toNonIndexed();
+// Flat-shaded triangle soup with a colour per face.
+function facets(build) {
+  const pos = [], col = [];
+  build((a, b, c, rgb, shade = 1) => {
+    pos.push(a[0], a[1], a[2], b[0], b[1], b[2], c[0], c[1], c[2]);
+    for (let k = 0; k < 3; k++) col.push(rgb[0] * shade, rgb[1] * shade, rgb[2] * shade);
+  });
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
   g.computeVertexNormals();
-  const pos = g.attributes.position, nor = g.attributes.normal, col = new Float32Array(pos.count * 3);
-  for (let i = 0; i < pos.count; i += 3) {
-    const y = (pos.getY(i) + pos.getY(i + 1) + pos.getY(i + 2)) / 3;
-    const t = y < 1 ? -1 : Math.min(Math.max(nor.getY(i) * 1.9, 0), 1) * 0.85;
-    const rgb = t < 0 ? [0.24, 0.15, 0.1] : [0.05 + t * 0.85, 0.2 + t * 0.73, 0.13 + t * 0.85];
-    for (let k = 0; k < 3; k++) col.set(rgb, (i + k) * 3);
-  }
-  g.setAttribute('color', new THREE.BufferAttribute(col, 3));
   return g;
+}
+
+// A pine as stacked, slightly uneven tiers: dark green skirts with snow lying on top of each.
+function pineGeometry(tiers, height, radius, seed, sides) {
+  const N = sides || quality.treeSides, GREEN = [0.07, 0.23, 0.16], UNDER = [0.04, 0.13, 0.1], SNOW = [0.93, 0.96, 1], BARK = [0.26, 0.17, 0.11];
+  const ring = (y, r, id, wobble) => {
+    const out = [];
+    for (let i = 0; i < N; i++) {
+      const a = ((i + 0.5 * (id % 2)) / N) * Math.PI * 2, k = r * (1 + wobble * (hash(i, id, seed) - 0.5));
+      out.push([Math.cos(a) * k, y + wobble * 0.5 * r * (hash(id, i, seed + 1) - 0.5), Math.sin(a) * k]);
+    }
+    return out;
+  };
+  return facets((tri) => {
+    const band = (lo, hi, rgb, id) => {
+      for (let i = 0; i < N; i++) {
+        const j = (i + 1) % N, shade = 0.9 + 0.2 * hash(i, id, seed + 2);
+        tri(lo[i], hi[i], lo[j], rgb, shade);
+        tri(lo[j], hi[i], hi[j], rgb, shade);
+      }
+    };
+    band(ring(-0.6, 0.26, 90, 0), ring(height * 0.22, 0.18, 91, 0), BARK, 90);
+    for (let t = 0; t < tiers; t++) {
+      const f = t / tiers, y0 = height * (0.15 + 0.78 * f), span = (height * 0.78 / tiers) * 1.55, r = radius * (1 - 0.74 * f);
+      const skirt = ring(y0, r, t * 3, 0.3), mid = ring(y0 + span * 0.42, r * 0.56, t * 3 + 1, 0.18), top = ring(y0 + span, t === tiers - 1 ? 0.02 : r * 0.16, t * 3 + 2, 0);
+      band(skirt, mid, GREEN, t * 3);
+      band(mid, top, SNOW, t * 3 + 1);
+      const hub = [0, y0 + 0.12 * r, 0];
+      for (let i = 0; i < N; i++) tri(skirt[(i + 1) % N], hub, skirt[i], UNDER);   // underside of the tier
+    }
+  });
+}
+
+// A boulder: a knocked-about icosahedron, bare rock on the sides and snow on top.
+function rockGeometry(seed) {
+  const base = new THREE.IcosahedronGeometry(1, 0).toNonIndexed(), p = base.attributes.position;
+  const at = (i) => {
+    const x = p.getX(i), y = p.getY(i), z = p.getZ(i), k = 0.75 + 0.5 * hash(Math.round(x * 50), Math.round(y * 50) + Math.round(z * 50) * 7, seed);
+    return [x * k, Math.max(y * k * 0.72, -0.35), z * k];
+  };
+  return facets((tri) => {
+    for (let i = 0; i < p.count; i += 3) {
+      const a = at(i), b = at(i + 1), c = at(i + 2);
+      const ny = (b[2] - a[2]) * (c[0] - a[0]) - (b[0] - a[0]) * (c[2] - a[2]), up = ny / (Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]) * Math.hypot(c[0] - a[0], c[1] - a[1], c[2] - a[2]) + 1e-6);
+      tri(a, b, c, up > 0.42 ? [0.93, 0.96, 1] : [0.4, 0.41, 0.46], 0.85 + 0.3 * hash(i, 3, seed));
+    }
+  });
 }
 
 // Detail settings the app may lower on slower devices, before the first terrain is built.
@@ -101,13 +148,13 @@ function sharedAssets() {
   tex.anisotropy = 8;
   const lam = (color, extra) => new THREE.MeshLambertMaterial({ color, ...extra });
   shared = {
-    snow: addSparkle(new THREE.MeshLambertMaterial({ vertexColors: true, map: tex, side: THREE.DoubleSide })),
-    powder: addSparkle(new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide })),
+    snow: addSparkle(new THREE.MeshLambertMaterial({ vertexColors: true, map: tex, side: THREE.DoubleSide, flatShading: true })),
+    powder: addSparkle(new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide, flatShading: true })),
+    flags: [0x3ddc84, 0x2f8fff, 0xff4b4b, 0x1c1f28].map((c) => lam(c, { side: THREE.DoubleSide })),
     treeMat: new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide }),
-    trees: [
-      treeGeometry([[0.26, -0.6], [0.26, 1.0], [2.1, 1.0], [0.8, 3.0], [1.6, 3.0], [0.55, 5.0], [1.05, 5.0], [0.0, 7.0]]),
-      treeGeometry([[0.2, -0.6], [0.2, 1.4], [1.35, 1.4], [0.6, 3.4], [1.1, 3.4], [0.45, 5.6], [0.85, 5.6], [0.3, 7.6], [0.6, 7.6], [0.0, 9.6]]),
-    ],
+    // 0: broad pine, 1: tall slim pine, 2: boulder
+    trees: [pineGeometry(3, 7, 2.2, 1), pineGeometry(4, 9.6, 1.5, 2), rockGeometry(3)],
+    farTrees: [pineGeometry(1, 7, 2.2, 1, 4), pineGeometry(2, 9.6, 1.5, 2, 4), rockGeometry(3)],
     rails: RAIL_COLOURS.map((col) => new THREE.MeshStandardMaterial({ color: col, roughness: 0.35, metalness: 0.5 })),
     steel: new THREE.MeshStandardMaterial({ color: 0x3a4250, roughness: 0.5, metalness: 0.7 }),
     boxSides: RAIL_COLOURS.map((col) => lam(col)),
@@ -126,7 +173,7 @@ export class Terrain {
   constructor(map) {
     this.map = map;
     this.a = sharedAssets();
-    this.step = map.length > 1200 ? 4 : 3;
+    this.step = map.length > 1200 ? 5 : 4;
     this.group = new THREE.Group();
     this.objects = new THREE.Group();
     this.group.add(this.objects);
@@ -359,32 +406,42 @@ export class Terrain {
     for (let gz = Math.floor(z0 / T); gz * T < m.length + 150; gz++) for (let gx = Math.floor(x0 / T); gx * T < -x0; gx++) {
       const x = (gx + 0.15 + 0.7 * hash(gx, gz, m.seed + 21)) * T, z = (gz + 0.15 + 0.7 * hash(gx, gz, m.seed + 22)) * T;
       const d = Math.abs(x - centerX(m, z)), side = d - m.width / 2;
-      let p = (side > 5 ? 0.5 * smooth((side - 5) / 15) : z < -16 || z > m.length + 70 ? 0.4 : 0) * quality.trees;
+      let p = (side > 5 ? 0.5 * smooth((side - 5) / 15) * (1 - 0.85 * smooth((side - 60) / 40)) : z < -16 || z > m.length + 70 ? 0.4 : 0) * quality.trees;
       if (!p && m.trees && side < -3 && z > 30 && z < m.length - 20 && !(z < 110 && d < 16)) {
         p = m.trees * 0.34 * smooth((noise(x / 60, z / 60, m.seed + 31) + 0.05) / 0.3);
       }
       if (hash(gx, gz, m.seed + 24) < p) f.push(x, this.base(x, z), z, 0.75 + hash(gx, gz, m.seed + 25) * 0.9, hash(gx, gz, m.seed + 26) < 0.35 ? 1 : 0);
+      else if (z > 20 && ((side > 4 && side < 60) || (m.powder && side < -6 && !(z < 110 && d < 16))) && hash(gx, gz, m.seed + 27) < (side > 0 ? 0.05 : 0.012 + 0.03 * m.cliffs) * quality.trees) {
+        const rx = (gx + 0.5) * T, rz = (gz + 0.5) * T;
+        f.push(rx, this.base(rx, rz) + 0.1, rz, 0.7 + hash(gx, gz, m.seed + 28) * 1.5, 2);
+      }
     }
     const mat = new THREE.Matrix4(), q = new THREE.Quaternion(), v = new THREE.Vector3(), s = new THREE.Vector3();
     const buckets = new Map();
     for (let t = 0; t < f.length; t += F) {
-      const key = Math.floor(f[t + 2] / 110) * 2 + f[t + 4];
+      const key = Math.floor(f[t + 2] / 110) * 3 + f[t + 4];
       if (!buckets.has(key)) buckets.set(key, []);
       buckets.get(key).push(t);
     }
     this.forestMeshes = [];
+    this.lod = [];
     for (const [key, list] of buckets) {
-      const inst = new THREE.InstancedMesh(a.trees[((key % 2) + 2) % 2], a.treeMat, list.length);
-      list.forEach((t, i) => {
-        q.setFromAxisAngle(UP, hash(t, 1, 2) * 6.28);
-        mat.compose(v.set(f[t], f[t + 1], f[t + 2]), q, s.set(f[t + 3], f[t + 3] * (0.9 + 0.3 * hash(t, 3, 4)), f[t + 3]));
-        inst.setMatrixAt(i, mat);
-      });
-      inst.castShadow = inst.receiveShadow = true;
-      inst.computeBoundingSphere();
-      this.group.add(inst);
-      this.forestMeshes.push(inst);
-      this.chunks.push(inst);
+      const kind = ((key % 3) + 3) % 3, pair = { z: (Math.floor(key / 3) + 0.5) * 110 };
+      for (const far of [false, true]) {
+        const inst = new THREE.InstancedMesh((far ? a.farTrees : a.trees)[kind], a.treeMat, list.length);
+        list.forEach((t, i) => {
+          q.setFromAxisAngle(UP, hash(t, 1, 2) * 6.28);
+          mat.compose(v.set(f[t], f[t + 1], f[t + 2]), q, s.set(f[t + 3], f[t + 3] * (0.9 + 0.3 * hash(t, 3, 4)), f[t + 3]));
+          inst.setMatrixAt(i, mat);
+        });
+        inst.castShadow = !far;
+        inst.receiveShadow = !far;
+        inst.computeBoundingSphere();
+        this.group.add(inst);
+        this.forestMeshes.push(inst);
+        pair[far ? 'far' : 'near'] = inst;
+      }
+      this.lod.push(pair);
     }
     if (!m.powder) this.buildFence();
   }
@@ -392,8 +449,14 @@ export class Terrain {
   // Hide whatever is beyond the fog. Frustum culling handles the rest.
   cull(eye, far) {
     for (const c of this.chunks) {
-      const b = c.boundingSphere || c.geometry.boundingSphere;
+      const b = c.geometry.boundingSphere;
       c.visible = b.center.distanceTo(eye) - b.radius < far;
+    }
+    // trees: full detail only in the bands of hillside close to the camera
+    for (const t of this.lod) {
+      const dz = Math.abs(t.z - eye.z) - 55, seen = dz < far;
+      t.near.visible = seen && dz < 90;
+      t.far.visible = seen && dz >= 90;
     }
   }
 
@@ -471,22 +534,25 @@ export class Terrain {
       m = this.railMesh(r);
       if (r.lip) m.add(this.bumpMesh(r.lip));
     }
-    else m = this.bumpMesh(this.bumps.find((b) => b.o === o));
+    else {
+      const b = this.bumps.find((x) => x.o === o);
+      m = b.type === 'roller' ? this.bumpMesh(b) : this.markers(b).add(this.bumpMesh(b));
+    }
     this.meshOf.set(o, m);
     this.objects.add(m);
   }
 
   // Shaped snow: a fine patch laid over the coarse ground mesh.
   bumpMesh(b) {
-    const w = b.hw * 2, nx = Math.ceil((w + 1) * 2), W = nx + 1, lipped = b.type !== 'roller';
+    const w = b.hw * 2, nx = Math.ceil(w + 1), W = nx + 1, lipped = b.type !== 'roller';
     const us = [];
-    for (let u = 0; u < b.T - 0.01; u += 0.5) us.push(u);
+    for (let u = 0; u < b.T - 0.4; u += 1) us.push(u);
     if (lipped) us.push(b.T, b.T + 0.03);          // the lip, then the face behind it
-    for (let u = b.T + 0.5; u < b.len; u += 0.5) us.push(u);
+    for (let u = b.T + 1; u < b.len - 0.4; u += 1) us.push(u);
     if (b.type !== 'kicker') us.push(b.len);
     const pos = [], col = [], uv = [], idx = [];
     us.forEach((u, j) => {
-      const lip = lipped && u <= b.T && u > b.T - 0.8, face = lipped && us[j - 1] === b.T;
+      const lip = lipped && u === b.T, face = lipped && us[j - 1] === b.T;
       for (let i = 0; i <= nx; i++) {
         const v = -b.hw - 0.5 + (i / nx) * (w + 1);
         const x = b.x + u * b.sin + v * b.cos, z = b.z + u * b.cos - v * b.sin;
@@ -571,6 +637,11 @@ export class Terrain {
         }
       }
     }
+    return this.bake(parts, group);
+  }
+
+  // Bake loose parts into one mesh per material: far fewer draw calls.
+  bake(parts, group) {
     const baked = new Map(), v = new THREE.Vector3(), nm = new THREE.Matrix3();
     for (const { geo, mat, part } of parts) {
       part.updateMatrix();
@@ -597,6 +668,26 @@ export class Terrain {
       group.add(mesh);
     }
     return group;
+  }
+
+  // Flags at the corners of a take-off, coloured by size like trail ratings.
+  markers(b) {
+    const a = this.a, parts = [], group = new THREE.Group();
+    const size = b.o.t === 'kicker' ? b.o.s : b.o.s + 1, flag = a.flags[Math.min(size, 3)];
+    for (const s of [-1, 1]) {
+      const v = s * (b.hw - b.edge + 0.7), u = b.T - 0.4;
+      const x = b.x + u * b.sin + v * b.cos, z = b.z + u * b.cos - v * b.sin, y = this.height(x, z);
+      const pole = new THREE.Object3D();
+      pole.position.set(x, y + 0.85, z);
+      pole.scale.set(0.06, 1.9, 0.06);
+      parts.push({ geo: a.cube, mat: a.steel, part: pole });
+      const cloth = new THREE.Object3D();
+      cloth.position.set(x + b.sin * 0.3, y + 1.55, z + b.cos * 0.3);
+      cloth.rotation.y = Math.atan2(b.sin, b.cos);
+      cloth.scale.set(0.025, 0.36, 0.6);
+      parts.push({ geo: a.cube, mat: flag, part: cloth });
+    }
+    return this.bake(parts, group);
   }
 
   disposeMesh(m) { m.traverse((o) => { if (o.userData.own) o.geometry.dispose(); }); }

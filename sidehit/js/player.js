@@ -425,7 +425,7 @@ export class Player {
     this.yawRate = 0;
     this.wind = 0;
     this.steerS = 0;
-    this.absorb = Math.min(impact / 9, 1);
+    this.absorb = Math.min(impact / 7, 1.15);
     this.hooks.sound.thump(impact);
     for (let i = 0; i < 14; i++) this.hooks.puff(this.pos, v.x * 0.3, 1.5, v.z * 0.3, 4 + impact * 0.4);
     const soft = this.powder ? 7 : 0;

@@ -51,11 +51,11 @@ function bind(x, y, z) {
 
 // Deck and base as two thin shaped sheets: rounded tips, sidecut, kicked nose and tail.
 function boardGeometry(drop, colour) {
-  const NZ = 28, NX = 4, HALF = 0.77, R = 0.145, pos = [], col = [], idx = [];
+  const NZ = 28, NX = 4, HALF = 0.8, R = 0.17, pos = [], col = [], idx = [];
   for (let j = 0; j <= NZ; j++) {
     const z = -HALF + (2 * HALF * j) / NZ, az = Math.abs(z);
     const tip = az - (HALF - R);
-    const half = tip > 0 ? Math.sqrt(Math.max(R * R - tip * tip, 0)) : 0.126 + 0.019 * (az / (HALF - R)) ** 2;
+    const half = tip > 0 ? Math.sqrt(Math.max(R * R - tip * tip, 0)) : 0.152 + 0.018 * (az / (HALF - R)) ** 2;
     const lift = az > 0.5 ? ((az - 0.5) / 0.27) ** 2 * 0.08 : 0;
     for (let i = 0; i <= NX; i++) {
       pos.push(-half + (2 * half * i) / NX, 0.03 + lift - drop, z);
@@ -103,7 +103,7 @@ export class Rider {
       foot.position.set(0, 0, s * 0.27);
       foot.rotation.y = s * 0.2;
       this.body.add(foot);
-      add(new THREE.BoxGeometry(0.33, 0.025, 0.17), this.m.dark, foot).position.set(-0.02, 0.045, 0);
+      add(new THREE.BoxGeometry(0.3, 0.025, 0.17), this.m.dark, foot).position.set(-0.02, 0.045, 0);
       const back = add(new THREE.BoxGeometry(0.022, 0.21, 0.14), this.m.dark, foot);
       back.position.set(0.115, 0.16, 0);
       back.rotation.z = -0.14;
@@ -121,6 +121,10 @@ export class Rider {
     this.tuck = 0;
     this.edge = 0;
     this.shift = 0;
+    this.crouchVel = 0;
+    this.twist = 0;
+    this.spin = 0;
+    this.look = 0;
     this.j = { hip: V(), neck: V(), sh: [V(), V()], elbow: [V(), V()], hand: [V(), V()], leg: [V(), V()], knee: [V(), V()], ankle: [V(), V()] };
     // per bone: rest origin, current origin, current rotation
     this.rest = [];
@@ -134,8 +138,8 @@ export class Rider {
     });
     this._c = V(); this._d = V(); this._e = V(); this._p = V(); this._q = V(); this._u = V(); this._w = V();
     this._qa = new THREE.Quaternion(); this._qb = new THREE.Quaternion();
-    this.look = sanitizeLook(look);
-    this.setLook(this.look);
+    this.style = sanitizeLook(look);
+    this.setLook(this.style);
   }
 
   // Fetch the model and bind it to the skeleton. Resolves when the rider can be drawn.
@@ -194,12 +198,12 @@ export class Rider {
     this.skin.castShadow = true;
     this.skin.frustumCulled = false;
     this.body.add(this.skin);
-    this.setLook(this.look);
-    this.pose({}, 1);
+    this.setLook(this.style);
+    this.pose({}, 1 / 60);
   }
 
   setLook(raw) {
-    const look = (this.look = sanitizeLook(raw)), C = (hex) => new THREE.Color(hex);
+    const look = (this.style = sanitizeLook(raw)), C = (hex) => new THREE.Color(hex);
     this.m.accent.color.set(look.jacket2);
     const main = C(look.board), art = C(look.board2);
     this.deck.geometry.dispose();
@@ -241,17 +245,23 @@ export class Rider {
     this.rot[bone].setFromUnitVectors(restDir, this._u.copy(to).sub(from).normalize());
   }
 
-  // t: { crouch 0..1, grab '' | 'indy' | 'mute', airborne, bail, tuck, edge -1..1 (heel..toe), shift -1..1 (tail..nose), time }
+  // t: { crouch 0..1, grab '' | 'indy' | 'mute', airborne, bail, tuck, edge -1..1 (heel..toe), shift -1..1 (tail..nose),
+  //      twist -1..1, spin 0..1, look -1..1, time }
   pose(t, dt) {
     if (!this.skin) return;
     const grabbing = !!t.grab, j = this.j, at = this.at, rot = this.rot;
-    this.crouch = damp(this.crouch, grabbing ? 1.25 : t.bail ? 0.5 : (t.crouch || 0), 14, dt);
+    const want = grabbing ? 1.25 : t.bail ? 0.5 : (t.crouch || 0), h = Math.min(dt, 1 / 30);
+    this.crouchVel += ((want - this.crouch) * 150 - this.crouchVel * 15) * h;
+    this.crouch = Math.max(this.crouch + this.crouchVel * h, -0.05);
     this.grab = damp(this.grab, grabbing ? 1 : 0, 14, dt);
     this.air = damp(this.air, t.airborne ? 1 : 0, 8, dt);
     this.flail = damp(this.flail, t.bail ? 1 : 0, 10, dt);
     this.tuck = damp(this.tuck, t.tuck ? 1 : 0, 9, dt);
     this.edge = damp(this.edge, t.edge || 0, 8, dt);
     this.shift = damp(this.shift, t.shift || 0, 9, dt);
+    this.twist = damp(this.twist, t.twist || 0, 10, dt);   // upper body wound against, or leading, the rotation
+    this.spin = damp(this.spin, t.spin || 0, 8, dt);        // 0..1: how hard the rider is spinning or flipping
+    this.look = damp(this.look, t.look || 0, 6, dt);        // head turning into the carve
     const c = this.crouch, time = t.time || 0, k = this.tuck, e = this.edge, air = this.air, w = this.shift;
 
     // Stance: knees bent and driven over the toes, hips stacked over the board, back fairly straight.
@@ -262,13 +272,13 @@ export class Rider {
     const up = this._w.set(0, 1, 0);
     this._aim(PELVIS, hip, neck, up);
     // shoulders turn a little toward the direction of travel, more in a tuck
-    const open = 0.38 + 0.3 * k;
+    const open = 0.38 + 0.3 * k + 0.6 * this.twist;
     this._qa.setFromAxisAngle(up, open);
     at[CHEST].copy(hip);
     rot[CHEST].copy(rot[PELVIS]).multiply(this._qa);
     // the head stays level and looks down the hill over the lead shoulder
     at[HEAD].copy(neck);
-    rot[HEAD].setFromAxisAngle(up, open + 0.85).premultiply(this._qb.setFromAxisAngle(this._p.set(0, 0, 1), fold * 0.25));
+    rot[HEAD].setFromAxisAngle(up, 0.38 + 0.3 * k + 0.3 * this.twist + 0.85 + 0.35 * this.look).premultiply(this._qb.setFromAxisAngle(this._p.set(0, 0, 1), fold * 0.25));
 
     const bend = this._c, down = this._q.set(0, -1, 0);
     for (let i = 0; i < 2; i++) {
@@ -285,7 +295,10 @@ export class Rider {
       // arms: shoulders ride with the chest. Riding: lead hand out over the nose, rear hand over the tail,
       // both in front of the body at about waist height. In the air they lift and spread for balance.
       const sh = j.sh[i].copy(REST.shoulder(s)).sub(REST.hip).applyQuaternion(rot[CHEST]).add(hip), hand = j.hand[i];
-      hand.set(sh.x - 0.14 - 0.03 * s - 0.05 * air, sh.y - 0.27 + 0.2 * air, sh.z + s * 0.3 * (1 + 0.55 * air));
+      hand.set(sh.x - 0.06 - 0.04 * s - 0.04 * air, sh.y - 0.47 + 0.34 * air, sh.z + s * 0.2 * (1 + 1.1 * air));
+      hand.y += 0.1 * Math.abs(e); hand.z += s * 0.08 * Math.abs(e);   // arms lift and spread a touch for balance on edge
+      // spinning or flipping: arms pull in tight to the chest to rotate faster
+      if (this.spin > 0.01) hand.lerp(this._e.set(sh.x - 0.2, sh.y - 0.16, sh.z - s * 0.1), 0.75 * this.spin);
       if (k > 0.01) {
         // tuck: lead hand low in front, rear hand tucked behind the back
         hand.lerp(s > 0 ? this._e.set(hip.x - 0.32, hip.y + 0.04, hip.z + 0.14) : this._e.set(hip.x + 0.17, hip.y + 0.12, hip.z - 0.08), k);
@@ -297,7 +310,7 @@ export class Rider {
       const g = this.grab * ((t.grab === 'mute') === (s === 1) ? 1 : 0);
       if (g > 0) hand.lerp(this._e.set(-0.17, 0.07, s * 0.03), g);
       else if (this.grab > 0.01) { hand.y += 0.24 * this.grab; hand.z += s * 0.14 * this.grab; }   // the free arm goes up and out
-      this._ik(sh, hand, LEN.upper, LEN.fore, bend.set(0.35, -1, s * 0.25), j.elbow[i]);
+      this._ik(sh, hand, LEN.upper, LEN.fore, bend.set(1, -0.15, s * 0.45), j.elbow[i]);
       this._aim(UPPER + i, sh, j.elbow[i], side);
       this._aim(FORE + i, j.elbow[i], hand, side);
     }

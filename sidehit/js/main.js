@@ -16,21 +16,22 @@ const damp = (a, b, rate, dt) => a + (b - a) * (1 - Math.exp(-rate * dt));
 
 // ---------------------------------------------------------------- scene ----
 const canvas = $('view');
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: !touch, powerPreference: 'high-performance' });
+// smoothing edges is only worth its cost on ordinary-density screens
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: !touch && devicePixelRatio <= 1.25, powerPreference: 'high-performance' });
 renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = touch ? THREE.PCFShadowMap : THREE.PCFSoftShadowMap;
+renderer.shadowMap.type = THREE.PCFShadowMap;
 renderer.shadowMap.autoUpdate = false;   // refreshed every other frame, see the loop
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 
 const scene = new THREE.Scene();
-const FOG_FAR = touch ? 540 : 720;   // phones draw a shorter distance
+const FOG_FAR = touch ? 460 : 600;   // phones draw a shorter distance
 scene.fog = new THREE.Fog(0xffffff, 140, FOG_FAR);
 const camera = new THREE.PerspectiveCamera(64, 1, 0.3, 6000);
 const hemi = new THREE.HemisphereLight(0xffffff, 0xffffff, 1);
 const sun = new THREE.DirectionalLight(0xffffff, 3);
 const sunDir = new THREE.Vector3();
 sun.castShadow = true;
-sun.shadow.mapSize.set(touch ? 1024 : 2048, touch ? 1024 : 2048);
+sun.shadow.mapSize.set(1024, 1024);
 sun.shadow.bias = -0.0006;
 sun.shadow.normalBias = 0.06;
 sun.shadow.radius = 3;
@@ -133,7 +134,7 @@ function puff(p, vx, vy, vz, spread) {
   const k = i * 3;
   spray.pos[k] = p.x; spray.pos[k + 1] = p.y + 0.1; spray.pos[k + 2] = p.z;
   spray.vel[k] = vx + (Math.random() - 0.5) * spread; spray.vel[k + 1] = vy + Math.random() * spread * 0.6; spray.vel[k + 2] = vz + (Math.random() - 0.5) * spread;
-  spray.life[i] = 0.5 + Math.random() * 0.5;
+  spray.life[i] = 0.28 + Math.random() * 0.3;
 }
 
 // The trench the board cuts: bright walls sloping into a shadowed floor.
@@ -224,10 +225,10 @@ const app = {
 const editor = new Editor(app);
 
 // Graphics: Auto scales the resolution to hold the frame rate; Low also drops shadows.
-const MAX_RATIO = Math.min(devicePixelRatio, touch ? 1.5 : 2);
-const gfx = { mode: 'auto', ratio: MAX_RATIO, time: 0, frames: 0, slow: 0 };
+const MAX_RATIO = Math.min(devicePixelRatio, 1.5);
+const gfx = { mode: 'auto', ratio: 1, time: 0, frames: 0, slow: 0, good: 0, drops: 0, fps: 0 };
 function setRatio(r) {
-  gfx.ratio = clamp(r, 0.7, MAX_RATIO);
+  gfx.ratio = clamp(r, 0.6, MAX_RATIO);
   renderer.setPixelRatio(gfx.ratio);
   renderer.setSize(innerWidth, innerHeight, false);
 }
@@ -241,7 +242,7 @@ function setGraphics(mode) {
   gfx.slow = 0;
   // Auto on a phone starts without shadows at a moderate resolution, then adapts
   setShadows(gfx.mode === 'high' || (gfx.mode === 'auto' && !touch));
-  setRatio(gfx.mode === 'low' ? 0.8 : gfx.mode === 'auto' && touch ? Math.min(1, MAX_RATIO) : MAX_RATIO);
+  setRatio(gfx.mode === 'low' ? 0.75 : gfx.mode === 'auto' ? Math.min(1, MAX_RATIO) : MAX_RATIO);
   gfx.drops = gfx.good = 0;
   sparkle.value = gfx.mode === 'low' ? 0 : (SKY[app.map && app.map.sky] || SKY.bluebird).glint;
   $('b-gfx').textContent = 'Graphics: ' + gfx.mode[0].toUpperCase() + gfx.mode.slice(1);
@@ -249,21 +250,23 @@ function setGraphics(mode) {
 function autoQuality(dt) {
   gfx.time += dt;
   gfx.frames++;
-  if (gfx.time < 1.5) return;
+  if (gfx.time < 1) return;
   const fps = gfx.frames / gfx.time;
   gfx.fps = Math.round(fps);
   gfx.time = gfx.frames = 0;
   if (gfx.mode !== 'auto' || document.hidden) return;
-  if (fps < 45) {
-    gfx.good = 0;
-    gfx.drops = (gfx.drops || 0) + 1;
-    // first give up resolution, then shadows
-    if (gfx.ratio > 0.85) setRatio(gfx.ratio - 0.15);
-    else if (++gfx.slow >= 2 && sun.castShadow) setShadows(false);
-    else if (gfx.ratio > 0.7) setRatio(gfx.ratio - 0.1);
-  } else if (fps > 57 && gfx.ratio < MAX_RATIO && (gfx.drops || 0) < 3) {
-    // every resize costs a hitch, so only climb back after a long smooth spell, and give up after a few tries
-    if ((gfx.good = (gfx.good || 0) + 1) >= 5) { gfx.good = 0; setRatio(gfx.ratio + 0.1); }
+  if (fps < 30) {
+    // far too slow: drop shadows, sparkle and resolution in one go
+    if (sun.castShadow) setShadows(false);
+    sparkle.value = 0;
+    if (gfx.ratio > 0.7) setRatio(0.7); else if (gfx.ratio > 0.6) setRatio(0.6);
+    gfx.good = 0; gfx.drops = 9;
+  } else if (fps < 50) {
+    gfx.good = 0; gfx.drops++;
+    if (sun.castShadow) setShadows(false); else if (gfx.ratio > 0.7) setRatio(gfx.ratio - 0.15);
+  } else if (fps > 57 && gfx.ratio < MAX_RATIO && gfx.drops < 3) {
+    // every resize costs a hitch, so only climb back after a long smooth spell
+    if (++gfx.good >= 6) { gfx.good = 0; setRatio(gfx.ratio + 0.1); }
   }
 }
 // if the browser drops the graphics context (low memory), recover instead of leaving a blank page
@@ -431,7 +434,7 @@ function setMap(map) {
   scene.add(app.terrain.group);
   app.best = getBest(map.id);
   applySky(map.sky);
-  spray.points.material.size = map.powder ? 0.95 : 0.6;
+  spray.points.material.size = map.powder ? 0.42 : 0.32;
   player.setTerrain(app.terrain);
   resetView();
 }
@@ -677,6 +680,16 @@ function setFov(f) {
 }
 
 const vis = { railOff: 0, press: 0, sink: 0 };
+// How bent the legs should be. In the air: extend for the pop, pull the board up, then reach for the landing.
+function riderCrouch(p, onSnow, sp) {
+  if (p.rail) return 0.4 + 0.5 * p.charge;
+  if (onSnow) return Math.max(p.press ? 0.45 : p.tuck ? 0.65 : 0.22 + 0.1 * Math.min(sp / 20, 1) + Math.abs(p.lean) * 0.5, 0.2 + 0.85 * p.charge, p.absorb * 0.95);
+  if (!p.air) return 0.5;
+  if (p.air.time < 0.16) return 0.05;
+  const gap = p.pos.y - app.terrain.height(p.pos.x, p.pos.z), flipping = Math.abs(p.flipVel) > 2;
+  if (p.vel.y < 0 && gap < 1.6 && !flipping) return 0.28;
+  return flipping ? 0.95 : 0.62;
+}
 const basis = new THREE.Matrix4(), bx = new THREE.Vector3(), bz = new THREE.Vector3(), f0 = new THREE.Vector3();
 function updateRider(dt) {
   const p = player, onSnow = p.state === 'ground';
@@ -702,20 +715,26 @@ function updateRider(dt) {
   rider.leanG.rotation.y = damp(rider.leanG.rotation.y, onSnow && p.braking && sp > 1 ? 1.1 : 0, 9, dt);
   rider.pivot.rotation.x = p.flip + p.tumble;
   rider.pose({
-    crouch: p.rail ? 0.4 + 0.5 * p.charge : onSnow ? Math.max(p.press ? 0.45 : p.tuck ? 0.65 : 0.22 + 0.1 * Math.min(sp / 20, 1) + Math.abs(p.lean) * 0.5, 0.2 + 0.85 * p.charge, p.absorb * 0.95) : 0.6,
+    crouch: riderCrouch(p, onSnow, sp),
     tuck: onSnow && p.tuck, edge: onSnow ? clamp(p.lean / 0.45, -1, 1) : 0, shift: vis.press * 0.85,
+    // wind the shoulders against the turn while loading a jump, then lead the spin with them in the air
+    twist: onSnow ? inp.steer * p.charge * 0.9 : p.air ? clamp(p.spinVel / 7, -1, 1) * 0.8 : 0,
+    spin: p.air ? clamp(Math.max(Math.abs(p.spinVel) / 7, Math.abs(p.flipVel) / 6) - 0.15, 0, 1) : 0,
+    look: onSnow ? clamp(p.yawRate / 1.6, -1, 1) : 0,
     grab: p.air && p.air.time > 0.12 ? inp.grab : '',
     airborne: !!p.rail || (p.state === 'air' && p.air.time > 0.15), bail: p.bail > 0, time: p.time,
   }, dt);
 
-  const deep = p.powder ? 0.35 + Math.min(sp / 25, 0.5) : 0;
-  if (onSnow && (p.carve > 0.12 || deep) && sp > 3) {
-    const count = Math.min(Math.round((p.carve * 7 + deep * 4) * dt * 60), 9), side = Math.sign(p.yawRate) || 1;
-    for (let i = 0; i < count; i++) puff(p.pos, p.vel.x * 0.35 + p.s3.x * side * 2.5, 0.8 + p.carve * 1.6, p.vel.z * 0.35 + p.s3.z * side * 2.5, 1.6 + p.carve * 2);
+  const deep = p.powder ? 0.25 + Math.min(sp / 30, 0.4) : 0;
+  if (onSnow && (p.carve > 0.15 || deep) && sp > 4) {
+    // thrown off the edge the rider is standing on, low and back along the track
+    const count = Math.min(Math.round((p.carve * 5 + deep * 3) * dt * 60), 6), side = Math.sign(p.yawRate) || 1, kick = 1.2 + p.carve * 2.2;
+    tmp.copy(p.pos).addScaledVector(up, -vis.sink).addScaledVector(bx, side * 0.14);
+    for (let i = 0; i < count; i++) puff(tmp, p.vel.x * 0.55 + p.s3.x * side * kick, 0.4 + p.carve * 1.3 + deep, p.vel.z * 0.55 + p.s3.z * side * kick, 0.8 + p.carve * 1.2);
   }
   if (trail.last.distanceToSquared(p.pos) > 0.16) {
     trail.last.copy(p.pos);
-    trailPush(p.pos, bx, up, onSnow ? 0.25 + 0.75 * p.carve : 0, p.powder);
+    trailPush(tmp.copy(p.pos).addScaledVector(up, -vis.sink), bx, up, onSnow ? 0.25 + 0.75 * p.carve : 0, p.powder);
   }
 }
 
@@ -827,4 +846,4 @@ setGraphics(store.get('sidehit.gfx', 'auto'));
 setMap(BUILTIN[0]);
 setMode('menu');
 requestAnimationFrame(frame);
-window.sidehit = { app, player, inp, editor, ride, edit, setMode, rider };
+window.sidehit = { app, player, inp, editor, ride, edit, setMode, rider, renderer, gfx };
