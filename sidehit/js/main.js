@@ -236,12 +236,110 @@ function autoQuality(dt) {
 }
 $('b-gfx').addEventListener('click', () => setGraphics({ auto: 'low', low: 'high', high: 'auto' }[gfx.mode]));
 
-// ---- rider customizer ----
-const LOOK_LABELS = { jacket: 'Jacket', jacket2: 'Trim', style: 'Jacket style', pants: 'Pants', headwear: 'Headwear', helmet: 'Helmet / beanie', lens: 'Goggles', gloves: 'Gloves', skin: 'Skin', build: 'Build', board: 'Board', board2: 'Board art', boardArt: 'Board design' };
+// ---- rider select: a showroom with the rider on a turntable ----
+const studio = new THREE.Group();
+studio.position.set(0, -4000, 0);
+studio.visible = false;
+scene.add(studio);
+{
+  const backdrop = new THREE.Mesh(new THREE.SphereGeometry(70, 32, 16), new THREE.ShaderMaterial({
+    side: THREE.BackSide, depthWrite: false, fog: false,
+    vertexShader: 'varying vec3 vDir; void main(){ vDir = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+    fragmentShader: `
+      varying vec3 vDir;
+      void main(){
+        vec3 d = normalize(vDir);
+        // night-blue hall with a warm glow behind the rider and light beams fanning up from the floor
+        vec3 col = mix(vec3(0.02, 0.03, 0.09), vec3(0.05, 0.1, 0.3), smoothstep(-0.2, 0.9, d.y));
+        float behind = pow(max(dot(d, normalize(vec3(0.0, 0.1, -1.0))), 0.0), 26.0);
+        col += vec3(1.0, 0.25, 0.5) * behind * 0.32;
+        float beams = pow(abs(sin(atan(d.x, -d.z) * 9.0)), 14.0) * smoothstep(0.0, 0.5, d.y) * smoothstep(0.95, 0.3, d.y);
+        col += vec3(0.2, 0.7, 1.0) * beams * 0.22 * step(d.z, 0.2);
+        gl_FragColor = vec4(col, 1.0);
+        #include <tonemapping_fragment>
+        #include <colorspace_fragment>
+      }`,
+  }));
+  const floor = new THREE.Mesh(new THREE.CircleGeometry(40, 48), new THREE.MeshStandardMaterial({ color: 0x070b1c, roughness: 0.35, metalness: 0.4 }));
+  floor.rotation.x = -Math.PI / 2;
+  floor.receiveShadow = true;
+  const podium = new THREE.Mesh(new THREE.CylinderGeometry(1.45, 1.6, 0.3, 48), new THREE.MeshStandardMaterial({ color: 0xeef3fa, roughness: 0.8 }));
+  podium.position.y = 0.15;
+  podium.receiveShadow = true;
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(1.62, 0.035, 8, 64), new THREE.MeshBasicMaterial({ color: 0xffe14a }));
+  ring.rotation.x = Math.PI / 2;
+  ring.position.y = 0.06;
+  const outer = new THREE.Mesh(new THREE.TorusGeometry(2.4, 0.02, 8, 64), new THREE.MeshBasicMaterial({ color: 0xff3d7f }));
+  outer.rotation.x = Math.PI / 2;
+  outer.position.y = 0.02;
+  const pink = new THREE.PointLight(0xff4f8f, 60, 14), cyan = new THREE.PointLight(0x35c8ff, 60, 14);
+  pink.position.set(-3, 2.4, -2.2);
+  cyan.position.set(3, 2, -2.6);
+  studio.add(backdrop, floor, podium, ring, outer, pink, cyan);
+}
+const turn = { angle: 0.6, drag: null, idle: 0 };
+function showStudio(on) {
+  studio.visible = on;
+  app.terrain.group.visible = !on;
+  sky.visible = trail.mesh.visible = spray.points.visible = !on;
+  for (const r of ranges) r.visible = !on;
+  scene.fog.far = on ? 1e6 : 720;
+  scene.fog.near = on ? 1e5 : 140;
+  if (on) {
+    // even showroom light, whatever the park's time of day
+    sunDir.set(-0.45, 0.75, 0.55).normalize();
+    sun.color.set(0xffffff); sun.intensity = 2.6;
+    hemi.color.set(0x9fb6ff); hemi.groundColor.set(0x30364f); hemi.intensity = 0.9;
+    renderer.toneMappingExposure = 1.15;
+    turn.angle = 0.6;
+    rider.leanG.rotation.set(0, 0, 0);
+    rider.pivot.rotation.x = 0;
+    rider.body.rotation.x = 0;
+    rider.body.position.y = -0.8;
+  } else applySky(app.map.sky);
+}
+canvas.addEventListener('pointerdown', (e) => { if (app.mode === 'custom') { turn.drag = e.clientX; canvas.setPointerCapture(e.pointerId); } });
+canvas.addEventListener('pointermove', (e) => { if (app.mode === 'custom' && turn.drag !== null) { turn.angle += (e.clientX - turn.drag) * 0.012; turn.drag = e.clientX; turn.idle = 0; } });
+for (const ev of ['pointerup', 'pointercancel']) canvas.addEventListener(ev, () => { turn.drag = null; });
+function studioFrame(dt) {
+  turn.idle += dt;
+  if (turn.drag === null && turn.idle > 1.2) turn.angle += dt * 0.45;
+  const o = studio.position, portrait = innerHeight > innerWidth;
+  rider.root.position.set(o.x, o.y + 0.31, o.z);
+  rider.root.rotation.set(0, turn.angle, 0);
+  rider.pose({ crouch: 0.16, time: performance.now() / 1000 }, dt);
+  // the option bar covers the bottom of the screen, so aim low enough to keep the whole rider above it
+  camera.position.set(o.x, o.y + 1.35, o.z + (portrait ? 6.3 : 4.9));
+  camera.lookAt(o.x, o.y + (portrait ? 0.15 : 0.5), o.z);
+  setFov(portrait ? 44 : 38);
+  cam.snap = true;
+}
+
+const LOOK_LABELS = { jacket: 'Jacket', jacket2: 'Trim', style: 'Cut', pants: 'Pants', headwear: 'Headwear', helmet: 'Lid colour', lens: 'Goggles', gloves: 'Gloves', skin: 'Skin', build: 'Build', board: 'Deck', board2: 'Art colour', boardArt: 'Design' };
+const LOOK_TABS = { Jacket: ['jacket', 'jacket2', 'style'], Pants: ['pants', 'gloves'], Head: ['headwear', 'helmet', 'lens', 'skin'], Board: ['board', 'board2', 'boardArt'], Body: ['build'] };
+const STYLES = [
+  ['Glacier', {}],
+  ['Sunset', { jacket: '#ff7a1a', jacket2: '#ff3d7f', style: 'two-tone', pants: '#7a1f3d', helmet: '#ffc928', lens: '#b44dff', board: '#ffc928', board2: '#ff3d7f', boardArt: 'split' }],
+  ['Night Shift', { jacket: '#1c1f28', jacket2: '#ff3d7f', style: 'stripe', pants: '#262b38', helmet: '#1c1f28', lens: '#22c7e8', board: '#1c1f28', board2: '#22c7e8', boardArt: 'bars' }],
+  ['Citrus', { jacket: '#ffc928', jacket2: '#f2f4f7', style: 'two-tone', pants: '#4a5d3a', headwear: 'beanie', helmet: '#ffc928', lens: '#3ddc84', gloves: '#f2f4f7', board: '#8be04e', board2: '#f2f4f7', boardArt: 'split' }],
+  ['Whiteout', { jacket: '#f2f4f7', jacket2: '#2f6fe0', style: 'stripe', pants: '#f2f4f7', helmet: '#f2f4f7', lens: '#f2f4f7', gloves: '#f2f4f7', board: '#f2f4f7', board2: '#1c1f28', boardArt: 'bars' }],
+  ['Grape Soda', { jacket: '#8a4fd8', jacket2: '#ffc928', style: 'two-tone', pants: '#3d5a80', headwear: 'beanie', helmet: '#ff3d7f', lens: '#ff8a1f', gloves: '#ffc928', board: '#2f6fe0', board2: '#ff3d7f', boardArt: 'solid' }],
+].map(([name, l]) => [name, sanitizeLook(l)]);
+const styleIndex = () => STYLES.findIndex(([, l]) => Object.keys(l).every((k) => k === 'skin' || k === 'build' || l[k] === look[k]));
+let lookTab = 'Jacket';
 function renderCustomizer() {
-  const box = $('looks');
-  box.textContent = '';
-  for (const key in LOOK_OPTIONS) {
+  const at = styleIndex();
+  $('c-name').textContent = at < 0 ? 'Custom' : STYLES[at][0];
+  const tabs = $('c-tabs'), box = $('looks');
+  tabs.textContent = box.textContent = '';
+  for (const name in LOOK_TABS) {
+    const b = document.createElement('button');
+    b.textContent = name;
+    b.classList.toggle('on', name === lookTab);
+    b.addEventListener('click', () => { lookTab = name; renderCustomizer(); });
+    tabs.append(b);
+  }
+  for (const key of LOOK_TABS[lookTab]) {
     const row = document.createElement('div'), label = document.createElement('span'), opts = document.createElement('div');
     row.className = 'lookrow';
     label.textContent = LOOK_LABELS[key];
@@ -262,6 +360,13 @@ function applyLook() {
   store.set('sidehit.look', look);
   renderCustomizer();
 }
+function stepStyle(d) {
+  const at = styleIndex(), next = STYLES[((at < 0 ? (d > 0 ? -1 : 0) : at) + d + STYLES.length) % STYLES.length][1];
+  look = sanitizeLook({ ...next, skin: look.skin, build: look.build });   // a style changes the kit, not the person
+  applyLook();
+}
+$('c-prev').addEventListener('click', () => stepStyle(-1));
+$('c-next').addEventListener('click', () => stepStyle(1));
 $('b-rider').addEventListener('click', () => { renderCustomizer(); setMode('custom'); });
 $('b-lookdone').addEventListener('click', () => setMode('menu'));
 $('b-random').addEventListener('click', () => {
@@ -304,6 +409,7 @@ function setMode(mode) {
   app.mode = mode;
   document.body.dataset.mode = mode;
   rider.root.visible = mode !== 'edit';
+  if (studio.visible !== (mode === 'custom')) showStudio(mode === 'custom');
   const s = mode === 'edit' ? 190 : 70;
   Object.assign(sun.shadow.camera, { left: -s, right: s, top: s, bottom: -s, near: 1, far: 700 });
   sun.shadow.camera.updateProjectionMatrix();
@@ -656,16 +762,8 @@ function frame(now) {
     editor.update();
     focus = editor.target;
   } else if (app.mode === 'custom') {
-    // slow turntable around the rider
-    updateRider(dt);
-    cam.orbit += dt * 0.5;
-    const p = player.pos, portrait = innerHeight > innerWidth;
-    camera.position.set(p.x + Math.sin(cam.orbit) * 3.6, p.y + 1.5, p.z + Math.cos(cam.orbit) * 3.6);
-    // on a wide screen the panel sits on the left, so frame the rider to the right of it
-    const shift = portrait ? 0 : 0.9;
-    camera.lookAt(p.x - Math.cos(cam.orbit) * shift, p.y + (portrait ? 0.35 : 0.85), p.z + Math.sin(cam.orbit) * shift);
-    setFov(portrait ? 46 : 34);
-    cam.snap = true;
+    studioFrame(dt);
+    focus = studio.position;
   } else {
     updateRider(dt);
     menuCamera(dt);
