@@ -80,33 +80,6 @@ sky.frustumCulled = false;
 sky.renderOrder = -2;
 scene.add(sky);
 
-// distant ranges that travel with the camera
-function makeRange(radius, base, amp, seed) {
-  const N = 220, pos = [], idx = [];
-  const ridge = (a) => { let h = 0; for (let o = 0; o < 5; o++) h += Math.abs(Math.sin(a * (3 + o * 4.7) + seed * (o + 1) * 1.7)) / (o + 1.4); return h; };
-  for (let i = 0; i <= N; i++) {
-    const a = (i / N) * TAU, x = Math.cos(a) * radius, z = Math.sin(a) * radius;
-    pos.push(x, base + amp * ridge(a), z, x, -1600, z);
-    if (i < N) idx.push(i * 2, i * 2 + 1, i * 2 + 2, i * 2 + 2, i * 2 + 1, i * 2 + 3);
-  }
-  const g = new THREE.BufferGeometry();
-  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-  g.setAttribute('color', new THREE.Float32BufferAttribute(new Float32Array(pos.length), 3));
-  g.setIndex(idx);
-  const m = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ vertexColors: true, fog: false, side: THREE.DoubleSide, depthWrite: false }));
-  m.frustumCulled = false;
-  m.renderOrder = -1;
-  scene.add(m);
-  return m;
-}
-const ranges = [makeRange(4000, -150, 420, 1.3), makeRange(3000, -420, 380, 4.1)];
-for (const r of ranges) r.visible = false;   // kept for reference; the panorama does this job now
-function tintRange(mesh, top, bottom) {
-  const c = mesh.geometry.attributes.color;
-  for (let i = 0; i < c.count; i++) { const k = i % 2 ? bottom : top; c.setXYZ(i, k.r, k.g, k.b); }
-  c.needsUpdate = true;
-}
-
 const SKY = {
   bluebird: { tint: [0.97, 1.02, 1.1], fog: 0xb4bfcf, glint: 1, zenith: 0x1f66cc, haze: 0xc4dcf2, sun: 0xffe9cf, power: 3.1, hemiSky: 0xa9cdfc, hemiGround: 0xf4f8ff, hemi: 1.5, dir: [-0.55, 0.42, 0.62], exposure: 1.4 },
   golden: { tint: [1, 1, 1], fog: 0xb3a59c, glint: 0.8, zenith: 0x4a6cb5, haze: 0xf3c9a8, sun: 0xffa868, power: 3.6, hemiSky: 0x9fb2e8, hemiGround: 0xffe2d0, hemi: 1.2, dir: [-0.78, 0.2, 0.55], exposure: 1.3 },
@@ -356,7 +329,6 @@ function showStudio(on) {
   studio.visible = on;
   app.terrain.group.visible = !on;
   sky.visible = trail.mesh.visible = spray.points.visible = !on;
-  for (const r of ranges) r.visible = !on;
   scene.fog.far = on ? 4000 : FOG_FAR;
   scene.fog.near = on ? 2000 : 140;
   if (on) {
@@ -389,8 +361,8 @@ function studioFrame(dt) {
   cam.snap = true;
 }
 
-const LOOK_LABELS = { jacket: 'Suit', jacket2: 'Trim', board: 'Deck', board2: 'Art colour', boardArt: 'Design' };
-const LOOK_TABS = { Suit: ['jacket', 'jacket2'], Board: ['board', 'board2', 'boardArt'] };
+const LOOK_LABELS = { jacket: 'Suit', jacket2: 'Trim', helmet: 'Helmet', lens: 'Goggles', board: 'Deck', board2: 'Art colour', boardArt: 'Design' };
+const LOOK_TABS = { Suit: ['jacket', 'jacket2'], Head: ['helmet', 'lens'], Board: ['board', 'board2', 'boardArt'] };
 const STYLES = [
   ['Factory', { boardArt: 'ridgeline' }],
   ['Glacier', { jacket: '#12a5a0', jacket2: '#ffe14a', board: '#12a5a0', board2: '#f2f4f7', boardArt: 'slash' }],
@@ -733,9 +705,9 @@ function chaseCamera(dt) {
   cam.dir.normalize();
   // close and low behind the rider; eases back with speed and in again while a trick is in the air
   cam.trick = damp(cam.trick || 0, p.air && p.air.time > 0.3 ? 1 : 0, 2.5, dt);
-  const back = (3.3 + Math.min(hs, 30) * 0.045) * (1 - 0.14 * cam.trick);
+  const back = (3.85 + Math.min(hs, 30) * 0.05) * (1 - 0.12 * cam.trick);
   tmp.copy(vp).addScaledVector(cam.dir, -back);
-  tmp.y = Math.max(vp.y + 1.45, T.height(tmp.x, tmp.z) + 1.25);
+  tmp.y = Math.max(vp.y + 1.6, T.height(tmp.x, tmp.z) + 1.3);
   tmp2.copy(vp).addScaledVector(cam.dir, 3.2);
   tmp2.y += 0.95;
   if (cam.snap) { cam.pos.copy(tmp); cam.look.copy(tmp2); cam.snap = false; }
@@ -950,7 +922,6 @@ function frame(now) {
   }
   updateSpray(dt);
   sky.position.copy(camera.position);
-  for (const r of ranges) r.position.copy(camera.position);
   sun.target.position.copy(focus);
   sun.position.copy(focus).addScaledVector(sunDir, 300);
   if (app.debugCamera) app.debugCamera(camera);

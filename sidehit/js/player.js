@@ -24,10 +24,12 @@ export const GRABS = {
   stalefish: { name: 'Stalefish', pts: 220 }, method: { name: 'Method', pts: 260 }, japan: { name: 'Japan', pts: 280 },
   nose: { name: 'Nose Grab', pts: 200 }, tail: { name: 'Tail Grab', pts: 190 }, roastbeef: { name: 'Roast Beef', pts: 240 },
 };
-// stick sectors, counter-clockwise from "right"
-const GRAB_RING = ['mute', 'japan', 'nose', 'method', 'melon', 'stalefish', 'tail', 'roastbeef'];
+// Stick direction when Grab goes down picks the grab. Sectors run counter-clockwise from "right":
+// right Indy, up-right Nose, up Stalefish, up-left Japan, left Method, down-left Roast Beef, down Melon,
+// down-right Tail; no direction is a Mute.
+const GRAB_RING = ['indy', 'nose', 'stalefish', 'japan', 'method', 'roastbeef', 'melon', 'tail'];
 export function pickGrab(x, y) {
-  if (Math.hypot(x, y) < 0.35) return 'indy';
+  if (Math.hypot(x, y) < 0.35) return 'mute';
   const sector = Math.round(Math.atan2(y, x) / (Math.PI / 4));
   return GRAB_RING[(sector + 8) % 8];
 }

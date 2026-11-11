@@ -16,6 +16,8 @@ export const LOOK_OPTIONS = {
   jacket2: ['#f07a2a', '#ffe14a', '#ff3d7f', '#22c7e8', '#f2f4f7', '#1c1f28', '#8be04e'],
   board: ['#ff0d38', '#12a5a0', '#ffc928', '#1c1f28', '#f2f4f7', '#2f6fe0', '#8be04e'],
   board2: ['#ffc212', '#f2f4f7', '#1c1f28', '#ff3d7f', '#22c7e8'],
+  helmet: ['#f2f4f7', '#1c1f28', '#4d7fb3', '#ff3d7f', '#ffc928', '#12a5a0'],
+  lens: ['amber', 'blue', 'violet', 'silver', 'green'],
   boardArt: ['ridgeline', 'wolf', 'slash', 'bars', 'split', 'solid'],
 };
 export const DEFAULT_LOOK = Object.fromEntries(Object.entries(LOOK_OPTIONS).map(([k, v]) => [k, v[0]]));
@@ -26,19 +28,25 @@ export function sanitizeLook(raw) {
   return out;
 }
 
-// Grab animations: which hand (1 = front, -1 = rear), where it takes the board (body space: -x toe edge,
-// +x heel edge, +z nose), and how the board is tweaked [pitch, roll, yaw] once the grab is held.
+// Grab poses, modelled on reference photos of real grabs. Common to all of them: hips stay over the
+// middle of the board, the knees come up hard toward the chest, the back stays long and leans over the
+// knees (it doesn't fold at the waist), the grabbing arm goes almost straight down to the edge, and the
+// free arm reaches high for balance. Body space: -x toe edge, +x heel edge, +z nose, y up.
+//   hand  1 = front hand, -1 = rear hand          at    where the hand takes the board
+//   lean  forward lean of the back (radians)      free  where the free hand goes, relative to its shoulder
+//   tilt  how the whole rider and board are angled once the grab is held [pitch, roll, yaw]
 const GRAB_POSE = {
-  indy: { hand: -1, at: [-0.17, 0.1, -0.03], tweak: [0, -0.1, 0.18] },
-  mute: { hand: 1, at: [-0.17, 0.1, 0.03], tweak: [0, -0.12, -0.18] },
-  melon: { hand: 1, at: [0.18, 0.1, 0.06], tweak: [0, 0.22, -0.1] },
-  stalefish: { hand: -1, at: [0.19, 0.1, -0.14], tweak: [0, 0.25, 0.15] },
-  method: { hand: 1, at: [0.2, 0.12, 0.08], tweak: [0.2, 0.6, -0.35] },
-  japan: { hand: 1, at: [-0.18, 0.1, 0.22], tweak: [-0.3, -0.35, -0.1] },
-  nose: { hand: 1, at: [0, 0.12, 0.6], tweak: [0.4, 0, 0] },
-  tail: { hand: -1, at: [0, 0.12, -0.6], tweak: [-0.4, 0, 0] },
-  roastbeef: { hand: -1, at: [0.17, 0.08, 0.02], tweak: [0.1, 0.3, -0.2] },
+  indy: { hand: -1, at: [-0.15, 0.11, -0.05], lean: 0.75, free: [0.02, 0.42, 0.34], tilt: [0.05, -0.35, 0.25] },
+  mute: { hand: 1, at: [-0.15, 0.11, 0.07], lean: 0.78, free: [0.06, 0.42, -0.34], tilt: [0, -0.35, -0.25] },
+  method: { hand: 1, at: [0.17, 0.13, 0.08], lean: 0.32, free: [0.1, 0.55, -0.12], tilt: [0.25, 0.8, -0.3] },
+  stalefish: { hand: -1, at: [0.18, 0.12, -0.17], lean: 0.5, free: [0, 0.48, 0.3], tilt: [-0.1, 0.45, 0.3] },
+  melon: { hand: 1, at: [0.17, 0.12, 0.06], lean: 0.55, free: [0.04, 0.45, -0.3], tilt: [0.1, 0.4, -0.2] },
+  japan: { hand: 1, at: [-0.15, 0.12, 0.15], lean: 0.85, free: [0.06, 0.4, -0.32], tilt: [-0.35, -0.5, -0.15] },
+  nose: { hand: 1, at: [-0.04, 0.14, 0.5], lean: 0.9, free: [0.05, 0.42, -0.34], tilt: [-0.35, -0.1, 0] },
+  tail: { hand: -1, at: [0.04, 0.14, -0.5], lean: 0.85, free: [0.04, 0.42, 0.34], tilt: [0.35, 0.1, 0] },
+  roastbeef: { hand: -1, at: [0.16, 0.1, 0.0], lean: 0.6, free: [0.03, 0.45, 0.3], tilt: [0.05, 0.4, 0.2] },
 };
+const Z_AXIS = V(0, 0, 1);
 
 // Bones the game drives, by the rig's names. Paired entries are [front foot side (+z), back side].
 const NAMES = {
@@ -202,13 +210,69 @@ export class Rider {
     this.armQuat = this.rest.get(this.armature).quat.clone();
     this.armToBody = new THREE.Matrix4().multiplyMatrices(toBody, this.armature.matrixWorld);
     this.bodyToArm = this.armToBody.clone().invert();
+    this.buildHeadgear(find('Head'));
     this.setLook(this.style);
     this.pose({}, 1 / 60);
+  }
+
+  // A helmet and goggles shaped to the model's head, replacing the flat ones painted on its texture.
+  // Built in body space (the rest pose faces -x), sized from the head's own vertices, then attached to
+  // the head bone with attach(), which keeps the size and placement whatever units the rig uses.
+  buildHeadgear(head) {
+    // sized from the skeleton: the head joint (top of the neck) and the crown joint above it
+    this.body.updateWorldMatrix(true, true);
+    const toBody = new THREE.Matrix4().copy(this.body.matrixWorld).invert();
+    const base = V().setFromMatrixPosition(head.matrixWorld).applyMatrix4(toBody);
+    const crown = V().setFromMatrixPosition(head.getObjectByName('head_end').matrixWorld).applyMatrix4(toBody);
+    const H = crown.distanceTo(base), mid = V().lerpVectors(base, crown, 0.55);
+    const rd = H * 0.62, rw = H * 0.56, ry = H * 0.6, top = crown.y + H * 0.06;
+    const gear = (this.headgear = new THREE.Group());
+    this.m.helmet = new THREE.MeshStandardMaterial({ roughness: 0.32, metalness: 0.05 });
+    this.m.strap = new THREE.MeshStandardMaterial({ color: 0x15171d, roughness: 0.8 });
+    // shell: a smooth dome sitting low over the ears, with a raised ridge front to back
+    const shell = new THREE.Mesh(new THREE.SphereGeometry(1, 32, 16, 0, Math.PI * 2, 0, Math.PI * 0.64), this.m.helmet);
+    shell.scale.set(rd, ry, rw);
+    shell.position.set(mid.x + rd * 0.05, top - ry, mid.z);
+    const ridge = new THREE.Mesh(new THREE.CapsuleGeometry(1, 1, 4, 12), this.m.helmet);
+    ridge.scale.set(rw * 0.12, rd * 0.55, rw * 0.09);
+    ridge.rotation.z = Math.PI / 2;
+    ridge.position.set(mid.x + rd * 0.08, top - ry * 0.02, mid.z);
+    // goggles: a curved lens across the face (-x), a thin frame top and bottom and a strap round the back
+    const lensTex = (() => {
+      const c = document.createElement('canvas'); c.width = 4; c.height = 64;
+      const g = c.getContext('2d'), grd = g.createLinearGradient(0, 0, 0, 64);
+      grd.addColorStop(0, '#fff'); grd.addColorStop(0.45, '#c8c8c8'); grd.addColorStop(1, '#5a5a5a');
+      g.fillStyle = grd; g.fillRect(0, 0, 4, 64);
+      const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
+    })();
+    this.m.lens = new THREE.MeshStandardMaterial({ map: lensTex, emissiveMap: lensTex, emissiveIntensity: 0.6, roughness: 0.1, metalness: 0.35 });
+    // goggles sit at eye level, just under the front of the shell
+    const gy = crown.y - H * 0.46, gh = H * 0.24, arc = 2.3, face = -Math.PI / 2;   // cylinder angle 0 points to +z; -pi/2 is -x
+    const band = (r, h, start, len, mat, y) => {
+      const m = new THREE.Mesh(new THREE.CylinderGeometry(1, 1, 1, 28, 1, true, start, len), mat);
+      m.scale.set(rd * r, h, rw * r);
+      m.position.set(mid.x, y, mid.z);
+      return m;
+    };
+    gear.add(shell, ridge,
+      band(1.07, gh, face - arc / 2, arc, this.m.lens, gy),
+      band(1.1, gh * 0.18, face - arc / 2 - 0.08, arc + 0.16, this.m.strap, gy + gh * 0.5),
+      band(1.1, gh * 0.18, face - arc / 2 - 0.08, arc + 0.16, this.m.strap, gy - gh * 0.5),
+      band(1.03, gh * 0.55, face + arc / 2, Math.PI * 2 - arc, this.m.strap, gy));
+    gear.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.material.side = THREE.DoubleSide; } });
+    this.body.add(gear);
+    head.attach(gear);
   }
 
   setLook(raw) {
     const look = (this.style = sanitizeLook(raw)), C = (hex) => new THREE.Color(hex);
     this.m.accent.color.set(look.jacket2);
+    if (this.m.helmet) {
+      this.m.helmet.color.set(look.helmet);
+      const LENS = { amber: [0xffa21f, 0x8a2bd0], blue: [0x3cc8ff, 0x1b3cff], violet: [0xd36bff, 0x2b1a8a], silver: [0xe8eef7, 0x55606f], green: [0x6dff9a, 0x0f6b5a] }[look.lens];
+      this.m.lens.color.setHex(LENS[0]);
+      this.m.lens.emissive.setHex(LENS[1]);
+    }
     const main = C(look.board), second = C(look.board2);
     this.deck.geometry.dispose();
     const art = this.art[look.boardArt] || null;
@@ -281,13 +345,13 @@ export class Rider {
     if (!this.skin) return;
     const B = this.bones, L = this.len, v = this.v, grabbing = !!t.grab;
     // legs are a spring: they compress on a landing and rebound, instead of sliding to the new height
-    const want = grabbing ? 1.55 : t.bail ? 0.5 : (t.crouch || 0), h = Math.min(dt, 1 / 30);
+    const want = grabbing ? 0.4 : t.bail ? 0.5 : (t.crouch || 0), h = Math.min(dt, 1 / 30);
     // the grab being held, and how far it is tweaked out (grows the longer it is held)
     if (grabbing) this.grabKey = t.grab;
-    this.tweakAmt = damp(this.tweakAmt || 0, grabbing ? Math.min(0.45 + (t.grabHold || 0) * 1.2, 1) : 0, 8, dt);
+    this.tweakAmt = damp(this.tweakAmt || 0, grabbing ? Math.min(0.45 + (t.grabHold || 0) * 1.2, 1) : 0, 7, dt);
     this.crouchVel += ((want - this.crouch) * 150 - this.crouchVel * 15) * h;
     this.crouch = Math.max(this.crouch + this.crouchVel * h, -0.05);
-    this.grab = damp(this.grab, grabbing ? 1 : 0, 14, dt);
+    this.grab = damp(this.grab, grabbing ? 1 : 0, 11, dt);
     this.air = damp(this.air, t.airborne ? 1 : 0, 8, dt);
     this.flail = damp(this.flail, t.bail ? 1 : 0, 10, dt);
     this.tuck = damp(this.tuck, t.tuck ? 1 : 0, 9, dt);
@@ -296,42 +360,46 @@ export class Rider {
     this.twist = damp(this.twist, t.twist || 0, 10, dt);
     this.spin = damp(this.spin, t.spin || 0, 8, dt);
     this.lookTurn = damp(this.lookTurn, t.look || 0, 6, dt);
-    const c = this.crouch, k = this.tuck, e = this.edge, air = this.air, w = this.shift, time = t.time || 0;
+    const c = Math.min(this.crouch, 1.2), k = this.tuck, e = this.edge, air = this.air, w = this.shift, time = t.time || 0;
+    const gp = GRAB_POSE[this.grabKey] || GRAB_POSE.indy, gr = this.grab;
     this.cur = this.cur || new Map();
 
-    {
-      const tw = (GRAB_POSE[this.grabKey] || GRAB_POSE.indy).tweak, a = this.tweakAmt;
-      this.body.rotation.x = (t.pitch || 0) + tw[0] * a;
-      this.body.rotation.z = tw[1] * a;
-      this.body.rotation.y = tw[2] * a;
-    }
-    // ---- targets in body space
-    // hips sink and sit back as the knees bend; toe edge drives them forward, a press slides them along the board
-    const lift = 0.045;   // board and binding height under the boots
-    const gr = this.grab;
-    const hip = v[0].set(this.restHip.x + 0.03 + 0.05 * c - 0.07 * e + 0.05 * k + 0.08 * gr, this.restHip.y + lift - 0.05 - 0.3 * Math.min(c, 1.3) - 0.1 * k - 0.14 * gr, 0.18 * w);
-    const fold = 0.12 + 0.3 * Math.min(c, 1.3) + 0.6 * k - 0.07 * e + 0.8 * gr;   // how far the torso leans over the board
-    const open = 0.4 + 0.3 * k + 0.6 * this.twist;                                   // shoulders turned toward the nose
-    const spineDir = v[1].set(-Math.sin(fold), Math.cos(fold), 0.06 * w);
+    // the whole rider and board tilt into the grab's style
+    const tw = gp.tilt, a = this.tweakAmt;
+    this.body.rotation.set((t.pitch || 0) + tw[0] * a, tw[2] * a, tw[1] * a);
 
-    // ---- spine and head
+    // ---- stance, in body space
+    // hips stay over the board: they sink as the knees bend, drift toward the edge being ridden, and for a
+    // grab drop right down so the knees come up to the chest
+    const lift = 0.045;   // board and binding height under the boots
+    const hip = v[0].set(
+      this.restHip.x + 0.01 - 0.13 * e + 0.02 * k,
+      this.restHip.y + lift - 0.05 - 0.3 * c - 0.14 * k - 0.38 * gr,
+      0.18 * w);
+    // forward lean of the back: a little when riding, more in a tuck or when the heel edge needs balancing
+    // toe edge: hips and knees drive toward the toes, back upright; heel edge: sit back over the heels and lean forward to balance
+    const riding = 0.06 + 0.2 * c + 0.45 * k + 0.24 * Math.max(-e, 0) - 0.06 * Math.max(e, 0);
+    const lean = riding + (gp.lean - riding) * gr;
+    const open = 0.4 + 0.3 * k + 0.6 * this.twist - 0.25 * gr;   // shoulders turned toward the nose
+
+    // ---- spine: the lean is shared by the pelvis and the three spine bones, so the back curves evenly
     const hips = B.hips, hr = this.rest.get(hips);
-    // hips: aim the spine, keep the pelvis square to the board otherwise
-    const restSpine = v[2].copy(this.rest.get(B.neck).pos).sub(hr.pos).normalize();
-    const hq = this.q[0].setFromUnitVectors(restSpine, spineDir).multiply(hr.quat);
     hips.position.copy(hip).applyMatrix4(this.bodyToArm);
-    const hc = this._set(hips, hq);
+    const hc = this._set(hips, this.q[0].setFromAxisAngle(Z_AXIS, lean * 0.3).multiply(hr.quat));
     hc.pos.copy(hip);
-    // chest twist spread over the three spine bones
+    const axis = v[1];
+    let bent = lean * 0.3;
     for (const bone of B.spine) {
       const pc = this._follow(bone);
-      this._set(bone, this.q[1].setFromAxisAngle(spineDir, open / 3).multiply(pc.quat));
+      bent += lean * 0.7 / 3;
+      axis.set(-Math.sin(bent), Math.cos(bent), 0);   // the back's direction at this bone
+      this._set(bone, this.q[1].setFromAxisAngle(Z_AXIS, lean * 0.7 / 3).multiply(this.q[2].setFromAxisAngle(axis, open / 3)).multiply(pc.quat));
     }
     this._follow(B.neck);
     // the head stays level and looks down the hill over the lead shoulder
     const hd = this.rest.get(B.head);
     this.headYaw = damp(this.headYaw, open + 0.5 + 0.28 * this.lookTurn, 6, dt);
-    this._set(B.head, this.q[1].setFromAxisAngle(UP, this.headYaw).multiply(this.q[2].setFromAxisAngle(V(0, 0, 1), Math.min(fold, 1.1) * 0.35)).multiply(hd.quat));
+    this._set(B.head, this.q[1].setFromAxisAngle(UP, this.headYaw).multiply(this.q[2].setFromAxisAngle(Z_AXIS, -lean * 0.75)).multiply(hd.quat));
 
     // ---- legs: hip sockets ride with the pelvis, ankles stay strapped to the board, knees track over the toes
     for (let i = 0; i < 2; i++) {
@@ -351,20 +419,32 @@ export class Rider {
     for (let i = 0; i < 2; i++) {
       const s = i ? -1 : 1;
       this._follow(B.shoulder[i]);
-      const sh = this._follow(B.arm[i]).pos, hand = v[6];
-      hand.set(sh.x - 0.05 - 0.05 * air, sh.y - 0.36 + 0.3 * air, sh.z + s * (0.16 + 0.22 * air));
-      hand.y += 0.08 * Math.abs(e); hand.z += s * 0.07 * Math.abs(e);
+      let sh = this._follow(B.arm[i]).pos;
+      const hand = v[6];
+      hand.set(sh.x - 0.05 - 0.05 * air, sh.y - 0.38 + 0.3 * air, sh.z + s * (0.15 + 0.22 * air));
+      hand.y += 0.1 * Math.abs(e); hand.z += s * 0.08 * Math.abs(e);
       if (this.spin > 0.01) hand.lerp(v[7].set(sh.x - 0.2, sh.y - 0.15, sh.z - s * 0.1), 0.75 * this.spin);
       // tuck: lead hand low in front, rear hand tucked behind the back
       if (k > 0.01) hand.lerp(s > 0 ? v[7].set(hip.x - 0.32, hip.y + 0.05, hip.z + 0.14) : v[7].set(hip.x + 0.17, hip.y + 0.12, hip.z - 0.08), k);
       if (this.flail > 0.01) { hand.x += this.flail * 0.3 * Math.sin(time * 17 + s); hand.y += this.flail * (0.4 + 0.3 * Math.sin(time * 13 + s * 2)); }
-      const gp = GRAB_POSE[this.grabKey] || GRAB_POSE.indy, g = gp.hand === s ? this.grab : 0;
-      if (g > 0) hand.lerp(v[7].set(...gp.at), g);                                                 // reach the board
-      else if (this.grab > 0.01) { hand.y += 0.3 * this.grab; hand.z += s * 0.18 * this.grab; hand.x += 0.05 * this.grab; }  // free arm up and out for style
+      if (gr > 0.01) {
+        // the grabbing hand goes to the board; the free one reaches high for balance
+        if (gp.hand === s) hand.lerp(v[7].set(gp.at[0], gp.at[1], gp.at[2]), gr);
+        else hand.lerp(v[7].set(sh.x + gp.free[0], sh.y + gp.free[1], sh.z + gp.free[2]), gr);
+      }
       // the hand glides toward where it wants to be instead of jumping there each frame
       const hp = this.hp[i] || (this.hp[i] = hand.clone());
-      hp.lerp(hand, 1 - Math.exp(-(g > 0 ? 22 : 13) * dt));
+      hp.lerp(hand, 1 - Math.exp(-(gr > 0.5 && gp.hand === s ? 24 : 14) * dt));
       hand.copy(hp);
+      // clavicle: lift or drop the shoulder a quarter of the way toward the hand, so the
+      // armpit isn't stretched when the arm goes overhead or down to the board
+      const sr = this.rest.get(B.shoulder[i]), sc = this.cur.get(B.shoulder[i]);
+      const toHand = v[8].copy(hand).sub(sh).normalize(), restArm = v[9].copy(sh).sub(sc.pos).normalize();
+      this.q[3].setFromUnitVectors(restArm, toHand);
+      this.q[1].identity().slerp(this.q[3], 0.22);
+      this._set(B.shoulder[i], this.q[2].copy(this.q[1]).multiply(sc.quat));
+      sh = this._follow(B.arm[i]).pos;
+      void sr;
       const elbow = this._ik(sh, hand, L.upper, L.fore, v[4].set(0.6, -0.75, s * 0.55), v[5]);
       this._aim(B.arm[i], B.fore[i], elbow);
       this._aim(B.fore[i], B.hand[i], hand);
