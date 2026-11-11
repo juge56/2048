@@ -27,10 +27,13 @@ const smooth = (t) => (t <= 0 ? 0 : t >= 1 ? 1 : t * t * (3 - 2 * t));
 // integral of a smoothstep that starts at `a` and takes `w` metres to reach full slope
 const ramp = (z, a, w) => { const t = (z - a) / w; return t <= 0 ? 0 : t >= 1 ? w / 2 + (z - a - w) : w * (t * t * t - (t * t * t * t) / 2); };
 
+// Rock drops: the snow builds up level behind a rock face, then falls away.
+export const DROP = [{ H: 1.6, L: 8, w: 7 }, { H: 2.8, L: 11, w: 9 }, { H: 4.2, L: 14, w: 12 }];
 // Length and width of the snow a shaped feature covers.
 export function bumpSize(o) {
   if (o.t === 'kicker') return { ...KICKER[o.s], len: KICKER[o.s].L };
   if (o.t === 'roller') return { ...ROLLER[o.s], len: ROLLER[o.s].L };
+  if (o.t === 'drop') return { ...DROP[o.s], len: DROP[o.s].L };
   const j = JUMP[o.s];
   return { ...j, len: j.T + j.D + j.R };
 }
@@ -178,8 +181,8 @@ function sharedAssets() {
   const lam = (color, extra) => new THREE.MeshLambertMaterial({ color, ...extra });
   rockTex.value = tiled('rock');
   shared = {
-    snow: addSparkle(new THREE.MeshLambertMaterial({ vertexColors: true, map: tiled('corduroy'), side: THREE.DoubleSide, flatShading: true })),
-    powder: addSparkle(new THREE.MeshLambertMaterial({ vertexColors: true, map: tiled('snow'), side: THREE.DoubleSide, flatShading: true })),
+    snow: addSparkle(new THREE.MeshLambertMaterial({ vertexColors: true, map: tiled('corduroy'), side: THREE.DoubleSide })),
+    powder: addSparkle(new THREE.MeshLambertMaterial({ vertexColors: true, map: tiled('snow'), side: THREE.DoubleSide })),
     flags: [0x3ddc84, 0x2f8fff, 0xff4b4b, 0x1c1f28].map((c) => lam(c, { side: THREE.DoubleSide })),
     treeMat: addDetail(new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide }), tiled('needles'), 0.9),
     rockMat: addDetail(new THREE.MeshLambertMaterial({ vertexColors: true }), rockTex.value, 1),
@@ -192,7 +195,7 @@ function sharedAssets() {
     boxTop: lam(0xf3f6fa),
     gate: lam(0xff3d7f),
     finish: lam(0x1b2a44),
-    net: lam(0xff7a1a, { side: THREE.DoubleSide, transparent: true, opacity: 0.8 }),
+    net: lam(0x9a6a45, { side: THREE.DoubleSide }),   // wooden fence
     tube: new THREE.CylinderGeometry(1, 1, 1, 12),
     ball: new THREE.SphereGeometry(1, 12, 8),
     cube: new THREE.BoxGeometry(1, 1, 1),
@@ -261,6 +264,7 @@ export class Terrain {
       if (u <= 0 || u >= b.len + over) continue;
       const e = v < b.hw - b.edge ? 1 : 1 - smooth((v - (b.hw - b.edge)) / b.edge);
       if (b.type === 'roller') { if (u < b.len) h += b.H * (0.5 - 0.5 * Math.cos((u / b.len) * Math.PI * 2)) * e; }
+      else if (b.type === 'drop') { if (u <= b.T + over) h += b.H * smooth(u / b.T) * e; }
       else if (u <= b.T + over) h += b.H * (u / b.T) ** 2 * e;
       else if (b.type === 'jump') {
         const d = u - b.T - b.D;
@@ -299,14 +303,19 @@ export class Terrain {
     this.bumps.length = 0;
     this.rails.length = 0;
     this.grid = new Map();
-    const addTree = (x, y, z, s) => {
+    // obstacles: x, base height, z, radius, height (you can clear one by jumping over its top)
+    const addSolid = (x, y, z, r, h) => {
       const k = Math.floor(x / CELL) + ',' + Math.floor(z / CELL);
       let cell = this.grid.get(k);
       if (!cell) this.grid.set(k, (cell = []));
-      cell.push(x, y, z, s);
+      cell.push(x, y, z, r, h);
     };
+    const addTree = (x, y, z, s) => addSolid(x, y, z, 0.3 + 0.3 * s, 5.5 * s);
     const f = this.forest;
-    for (let i = 0; i < f.length; i += F) addTree(f[i], f[i + 1], f[i + 2], f[i + 3]);
+    for (let i = 0; i < f.length; i += F) {
+      if (f[i + 4] === 2) addSolid(f[i], f[i + 1], f[i + 2], 0.8 * f[i + 3], 0.6 * f[i + 3]);   // boulder
+      else addTree(f[i], f[i + 1], f[i + 2], f[i + 3]);
+    }
     for (const o of this.map.objects) {
       if (o.t === 'tree') addTree(o.x, this.base(o.x, o.z), o.z, o.s);
       else if (o.t !== 'rail' && o.t !== 'box') {
@@ -368,9 +377,9 @@ export class Terrain {
     for (let k = 0; k < 4; k++) {
       const cell = this.grid.get(Math.floor((x + (k & 1 ? 1.2 : -1.2)) / CELL) + ',' + Math.floor((z + (k & 2 ? 1.2 : -1.2)) / CELL));
       if (!cell) continue;
-      for (let t = 0; t < cell.length; t += 4) {
-        const dx = x - cell[t], dz = z - cell[t + 2], r = 0.3 + 0.3 * cell[t + 3];
-        if (dx * dx + dz * dz < r * r && y < cell[t + 1] + 5.5 * cell[t + 3]) return { x: cell[t], z: cell[t + 2], r };
+      for (let t = 0; t < cell.length; t += 5) {
+        const dx = x - cell[t], dz = z - cell[t + 2], r = cell[t + 3];
+        if (dx * dx + dz * dz < r * r && y < cell[t + 1] + cell[t + 4]) return { x: cell[t], z: cell[t + 2], r, rock: cell[t + 4] < 3 };
       }
     }
     return null;
@@ -499,10 +508,11 @@ export class Terrain {
       let rows = 0;
       for (let z = 0; z <= m.length; z += 4, rows++) {
         const x = centerX(m, z) + side * (m.width / 2 + 3), y = this.base(x, z);
-        pos.push(x, y + 0.35, z, x, y + 1.2, z);
-        if (rows % 2 === 0) posts.push(x, y + 0.55, z);
+        // two wooden rails
+        pos.push(x, y + 0.42, z, x, y + 0.6, z, x, y + 0.88, z, x, y + 1.06, z);
+        posts.push(x, y + 0.45, z);
       }
-      for (let i = 0; i < rows - 1; i++) { const p = start + i * 2; idx.push(p, p + 1, p + 2, p + 2, p + 1, p + 3); }
+      for (let i = 0; i < rows - 1; i++) for (const k of [0, 2]) { const p = start + i * 4 + k; idx.push(p, p + 1, p + 4, p + 4, p + 1, p + 5); }
     }
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
@@ -510,9 +520,9 @@ export class Terrain {
     g.computeVertexNormals();
     this.group.add(new THREE.Mesh(g, a.net));
     this.own.push(g);
-    const inst = new THREE.InstancedMesh(a.cube, a.steel, posts.length / 3);
+    const inst = new THREE.InstancedMesh(a.cube, a.net, posts.length / 3);
     const mat = new THREE.Matrix4();
-    for (let i = 0; i < posts.length; i += 3) inst.setMatrixAt(i / 3, mat.makeScale(0.07, 1.5, 0.07).setPosition(posts[i], posts[i + 1], posts[i + 2]));
+    for (let i = 0; i < posts.length; i += 3) inst.setMatrixAt(i / 3, mat.makeScale(0.16, 1.5, 0.16).setPosition(posts[i], posts[i + 1], posts[i + 2]));
     inst.frustumCulled = false;
     this.group.add(inst);
     this.fencePosts = inst;
@@ -567,7 +577,7 @@ export class Terrain {
     }
     else {
       const b = this.bumps.find((x) => x.o === o);
-      m = b.type === 'roller' ? this.bumpMesh(b) : this.markers(b).add(this.bumpMesh(b));
+      m = b.type === 'roller' ? this.bumpMesh(b) : b.type === 'drop' ? this.rockFace(b).add(this.bumpMesh(b)) : this.markers(b).add(this.bumpMesh(b));
     }
     this.meshOf.set(o, m);
     this.objects.add(m);
@@ -580,7 +590,7 @@ export class Terrain {
     for (let u = 0; u < b.T - 0.4; u += 1) us.push(u);
     if (lipped) us.push(b.T, b.T + 0.03);          // the lip, then the face behind it
     for (let u = b.T + 1; u < b.len - 0.4; u += 1) us.push(u);
-    if (b.type !== 'kicker') us.push(b.len);
+    if (b.type !== 'kicker' && b.type !== 'drop') us.push(b.len);
     const pos = [], col = [], uv = [], idx = [];
     us.forEach((u, j) => {
       const lip = lipped && u === b.T, face = lipped && us[j - 1] === b.T;
@@ -590,7 +600,7 @@ export class Terrain {
         // coloured markers at the edges of the take-off, as parks paint them
         const marker = lip && Math.abs(Math.abs(v) - (b.hw - b.edge)) < 0.45;
         pos.push(x, this.height(x, z) + 0.05, z);
-        if (marker) col.push(0.1, 0.45, 1); else if (lip) col.push(1, 0.36, 0.2); else if (face) col.push(0.62, 0.7, 0.84); else col.push(0.93, 0.95, 1);
+        if (marker) col.push(0.1, 0.45, 1); else if (lip) col.push(1, 0.36, 0.2); else if (face) col.push(...(b.type === 'drop' ? [0.4, 0.41, 0.46] : [0.62, 0.7, 0.84])); else col.push(0.93, 0.95, 1);
         uv.push((x - this.center(z)) / 5, z / 5);
       }
     });
@@ -697,6 +707,22 @@ export class Terrain {
       mesh.castShadow = true;
       mesh.userData.own = true;
       group.add(mesh);
+    }
+    return group;
+  }
+
+  // Boulders packed under the lip of a rock drop.
+  rockFace(b) {
+    const group = new THREE.Group(), n = Math.max(2, Math.round(b.hw * 2 / 3));
+    for (let i = 0; i < n; i++) {
+      const v = -b.hw + (i + 0.5) * (b.hw * 2 / n), u = b.T - 0.9;
+      const x = b.x + u * b.sin + v * b.cos, z = b.z + u * b.cos - v * b.sin, y = this.base(x, z);
+      const rock = new THREE.Mesh(this.a.trees[2], this.a.rockMat);
+      rock.position.set(x, y + b.H * 0.25, z);
+      rock.scale.set(b.hw * 2 / n * 0.72, b.H * 0.78, 1.5 + 0.5 * hash(i, b.x, 7));
+      rock.rotation.y = Math.atan2(b.sin, b.cos) + (hash(i, b.z, 8) - 0.5) * 0.5;
+      rock.castShadow = rock.receiveShadow = true;
+      group.add(rock);
     }
     return group;
   }

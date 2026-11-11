@@ -23,7 +23,7 @@ const canvas = $('view');
 // smoothing edges is only worth its cost on ordinary-density screens
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: !touch && devicePixelRatio <= 1.25, powerPreference: 'high-performance' });
 renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFShadowMap;
+renderer.shadowMap.type = touch ? THREE.PCFShadowMap : THREE.PCFSoftShadowMap;
 renderer.shadowMap.autoUpdate = false;   // refreshed every other frame, see the loop
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 
@@ -118,7 +118,7 @@ const spray = { pos: new Float32Array(SPRAY * 3).fill(-1e5), vel: new Float32Arr
   g.fillRect(0, 0, 32, 32);
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.BufferAttribute(spray.pos, 3));
-  spray.points = new THREE.Points(geo, new THREE.PointsMaterial({ map: new THREE.CanvasTexture(c), size: 0.55, transparent: true, opacity: 0.85, depthWrite: false }));
+  spray.points = new THREE.Points(geo, new THREE.PointsMaterial({ map: new THREE.CanvasTexture(c), size: 0.55, transparent: true, opacity: 0.5, depthWrite: false }));
   spray.points.frustumCulled = false;
   scene.add(spray.points);
 }
@@ -198,7 +198,7 @@ const store = {
 const ctl = { twin: false };   // control scheme: classic, or twin-stick (nose and tail)
 let look = sanitizeLook(store.get('sidehit.look', null));
 const rider = new Rider(look);
-rider.root.scale.setScalar(1.18);   // a touch larger than life so the rider reads clearly on a phone
+rider.root.scale.setScalar(1.12);   // a touch larger than life so the rider reads clearly on a phone
 rider.load('models/snowboarder/').catch(() => flash('Rider model failed to load', 'bad'));
 scene.add(rider.root);
 let flashTimer = 0;
@@ -361,16 +361,15 @@ function studioFrame(dt) {
   cam.snap = true;
 }
 
-const LOOK_LABELS = { jacket: 'Suit', jacket2: 'Trim', helmet: 'Helmet', lens: 'Goggles', board: 'Deck', board2: 'Art colour', boardArt: 'Design' };
-const LOOK_TABS = { Suit: ['jacket', 'jacket2'], Head: ['helmet', 'lens'], Board: ['board', 'board2', 'boardArt'] };
+const LOOK_LABELS = { jacket: 'Jacket', jacket2: 'Trim', pants: 'Pants', helmet: 'Helmet', lens: 'Goggles', board: 'Deck', board2: 'Art colour', boardArt: 'Design' };
+const LOOK_TABS = { Suit: ['jacket', 'jacket2', 'pants'], Head: ['helmet', 'lens'], Board: ['board', 'board2', 'boardArt'] };
 const STYLES = [
-  ['Factory', { boardArt: 'ridgeline' }],
-  ['Glacier', { jacket: '#12a5a0', jacket2: '#ffe14a', board: '#12a5a0', board2: '#f2f4f7', boardArt: 'slash' }],
-  ['Sunset', { jacket: '#ff3d7f', jacket2: '#ffe14a', board: '#ffc928', board2: '#ff3d7f', boardArt: 'split' }],
-  ['Night Shift', { jacket: '#2a2f3d', jacket2: '#22c7e8', board: '#1c1f28', board2: '#22c7e8', boardArt: 'wolf' }],
-  ['Citrus', { jacket: '#ffc928', jacket2: '#8be04e', board: '#8be04e', board2: '#f2f4f7', boardArt: 'split' }],
-  ['Whiteout', { jacket: '#d8dde6', jacket2: '#1c1f28', board: '#f2f4f7', board2: '#1c1f28', boardArt: 'bars' }],
-  ['Grape Soda', { jacket: '#8a4fd8', jacket2: '#ff3d7f', board: '#2f6fe0', board2: '#ff3d7f', boardArt: 'solid' }],
+  ['Sage', { boardArt: 'ridgeline' }],
+  ['Burgundy', { jacket: '#a8324a', jacket2: '#1c1f28', pants: '#2a2d36', helmet: '#1c1f28', lens: 'blue', boardArt: 'slash' }],
+  ['Sunrise', { jacket: '#e8a13a', jacket2: '#f07a2a', pants: '#6b6f78', helmet: '#f2f4f7', lens: 'amber', boardArt: 'ridgeline' }],
+  ['Night Shift', { jacket: '#2a2f3d', jacket2: '#22c7e8', pants: '#2a2d36', helmet: '#1c1f28', lens: 'violet', boardArt: 'wolf' }],
+  ['Whiteout', { jacket: '#d8dde6', jacket2: '#1c1f28', pants: '#d8dde6', helmet: '#f2f4f7', lens: 'silver', boardArt: 'wolf' }],
+  ['Grape Soda', { jacket: '#8a4fd8', jacket2: '#ff3d7f', pants: '#3d5a80', helmet: '#ff3d7f', lens: 'green', boardArt: 'slash' }],
 ].map(([name, l]) => [name, sanitizeLook(l)]);
 const styleIndex = () => STYLES.findIndex(([, l]) => Object.keys(l).every((k) => l[k] === look[k]));
 let lookTab = 'Suit';
@@ -510,7 +509,7 @@ function renderMenu() {
     const meta = document.createElement('span');
     const best = getBest(map.id);
     const kind = map.powder ? 'Powder' : map.curve > 0.3 && map.length > 1000 ? 'Course' : 'Park';
-    meta.textContent = `${kind}${custom ? ' · custom' : ''} · ${map.powder ? 'no features' : map.objects.length + ' features'} · ${Math.round(map.length)} m` + (best ? ` · best ${best.toLocaleString()}` : '');
+    meta.textContent = `${kind}${custom ? ' · custom' : ''} · ${map.objects.length ? map.objects.length + ' features' : 'no features'} · ${Math.round(map.length)} m` + (best ? ` · best ${best.toLocaleString()}` : '');
     info.append(name, meta);
     info.addEventListener('click', () => { if (map !== app.map) { setMap(map); renderMenu(); } });
     const btn = (label, fn, cls = '') => {
@@ -801,11 +800,12 @@ function updateRider(dt) {
     airborne: !!p.rail || (p.state === 'air' && p.air.time > 0.15), bail: p.bail > 0, time: p.time,
   }, dt);
 
-  const deep = p.powder ? 0.25 + Math.min(sp / 30, 0.4) : 0;
-  if (onSnow && (p.carve > 0.15 || deep) && sp > 4) {
+  // spray only when the edge is really digging in (hard carve, brake, slash), and a light dusting in powder
+  const deep = p.powder ? 0.12 + Math.min(sp / 40, 0.2) : 0, dig = Math.max(p.carve - 0.45, 0) / 0.55;
+  if (onSnow && (dig > 0 || deep) && sp > 5) {
     // thrown off the edge the rider is standing on, low and back along the track
-    const count = Math.min(Math.round((p.carve * 5 + deep * 3) * dt * 60), 6), side = Math.sign(p.yawRate) || 1, kick = 1.2 + p.carve * 2.2;
-    tmp.copy(vp).addScaledVector(up, -vis.sink).addScaledVector(bx, side * 0.14);
+    const count = Math.min(Math.round((dig * 3 + deep * 2) * dt * 60 + Math.random() * 0.6), 3), side = Math.sign(p.yawRate) || 1, kick = 1.2 + p.carve * 2.2;
+    tmp.copy(vp).addScaledVector(up, -vis.sink).addScaledVector(bx, side * 0.16).addScaledVector(bz, -0.5);
     for (let i = 0; i < count; i++) puff(tmp, p.vel.x * 0.55 + p.s3.x * side * kick, 0.4 + p.carve * 1.3 + deep, p.vel.z * 0.55 + p.s3.z * side * kick, 0.8 + p.carve * 1.2);
   }
   if (trail.last.distanceToSquared(vp) > 0.16) {

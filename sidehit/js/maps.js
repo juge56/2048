@@ -14,9 +14,9 @@
 //   lip      false to leave out the snow take-off in front of a rail or box
 
 export const SKIES = ['bluebird', 'golden', 'dusk'];
-export const TYPES = ['kicker', 'jump', 'roller', 'rail', 'box', 'tree'];
+export const TYPES = ['kicker', 'jump', 'roller', 'drop', 'rail', 'box', 'tree'];
 export const SHAPES = { rail: ['straight', 'rainbow', 'z', 'kink'], box: ['straight', 'wide', 'flatdown'] };
-export const SIZES = { kicker: 4, jump: 3, roller: 3 };
+export const SIZES = { kicker: 4, jump: 3, roller: 3, drop: 3 };
 export const MAX_OBJECTS = 200;
 
 const num = (v, lo, hi, def) => (Number.isFinite(+v) ? Math.min(Math.max(+v, lo), hi) : def);
@@ -81,6 +81,7 @@ export function blankMap() {
 const K = (x, z, s, r = 0) => ({ t: 'kicker', x, z, s, r });
 const J = (x, z, s, r = 0) => ({ t: 'jump', x, z, s, r });
 const O = (x, z, s, r = 0) => ({ t: 'roller', x, z, s, r });
+const D = (x, z, s, r = 0) => ({ t: 'drop', x, z, s, r });
 const R = (x, z, len, h = 0.45, k = 'straight', r = 0) => ({ t: 'rail', x, z, len, h, k, r });
 const B = (x, z, len, h = 0.5, k = 'straight', r = 0) => ({ t: 'box', x, z, len, h, k, r });
 const T = (x, z, s = 1) => ({ t: 'tree', x, z, s });
@@ -94,8 +95,9 @@ function along(map, list) {
 
 export const BUILTIN = [
   {
-    id: 'warmup', name: 'Warm-Up Lap', length: 560, width: 140, slope: 0.28, bumps: 0.35, seed: 3, sky: 'bluebird',
+    id: 'warmup', name: 'Warm-Up Lap', length: 560, width: 140, slope: 0.28, bumps: 0.35, seed: 3, sky: 'golden',
     objects: [
+      D(-54, 190, 1), D(-54, 340, 0),
       K(-24, 70, 0), J(-24, 130, 0), J(-24, 235, 1), J(-24, 355, 1), O(-24, 470, 1),
       R(18, 85, 16, 0.45, 'z'), B(24, 165, 16), R(16, 250, 21, 0.5, 'kink'), B(30, 335, 14, 0.6, 'wide', 0.2), R(20, 420, 18, 0.5, 'rainbow'),
       K(48, 120, 0, -0.15), K(46, 290, 1), B(46, 400, 18, 0.5, 'flatdown'),
@@ -133,8 +135,10 @@ export const BUILTIN = [
     O(0, 540, 1), O(0, 580, 1), O(0, 620, 1), K(-20, 700, 2), K(20, 720, 2), J(0, 830, 2),
     R(0, 980, 36, 0.8, 'kink'), J(-18, 1090, 1), J(18, 1090, 1), K(0, 1230, 3), O(0, 1350, 2),
   ]),
-  { id: 'bowl', name: 'Backcountry Bowl', length: 2200, width: 280, slope: 0.42, bumps: 1, curve: 0.5, powder: true, trees: 0.6, cliffs: 0.7, seed: 41, sky: 'bluebird', objects: [] },
-  { id: 'glades', name: 'Deep Glades', length: 1600, width: 220, slope: 0.36, bumps: 0.8, curve: 0.9, powder: true, trees: 1, cliffs: 0.35, seed: 63, sky: 'golden', objects: [] },
+  along({ id: 'bowl', name: 'Backcountry Bowl', length: 2200, width: 280, slope: 0.42, bumps: 1, curve: 0.5, powder: true, trees: 0.6, cliffs: 0.7, seed: 41, sky: 'bluebird' },
+    [D(0, 260, 1), D(-45, 520, 2), D(40, 800, 1), D(0, 1100, 2), D(-50, 1400, 2), D(35, 1700, 1), D(0, 1950, 2)]),
+  along({ id: 'glades', name: 'Deep Glades', length: 1600, width: 220, slope: 0.36, bumps: 0.8, curve: 0.9, powder: true, trees: 1, cliffs: 0.35, seed: 63, sky: 'golden' },
+    [D(0, 240, 0), D(30, 520, 1), D(-30, 820, 1), D(0, 1150, 2), D(25, 1400, 1)]),
 ].map(sanitizeMap);
 
 const KEY = 'sidehit.maps', BEST = 'sidehit.best';

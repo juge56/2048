@@ -171,7 +171,7 @@ export class Player {
     else if (this.grounded) this.stepGround(dt, inp, released);
     else this.stepAir(dt, inp);
 
-    if (this.bail <= 0 && this.collideTree() > 6) this.crash('Tree!');
+    if (this.bail <= 0 && this.collideTree() > 6) this.crash(this.hitRock ? 'Rock!' : 'Tree!');
     if (this.bail <= 0 && !this.rail && this.collideRails() > 9) this.crash('Rail!');
     if (this.combo.length && this.grounded && !this.rail && !this.press) {
       this.comboTimer -= dt;
@@ -184,6 +184,7 @@ export class Player {
   collideTree() {
     const tree = this.terrain.hitTree(this.pos.x, this.pos.y, this.pos.z);
     if (!tree) return 0;
+    this.hitRock = tree.rock;
     tmp.set(this.pos.x - tree.x, 0, this.pos.z - tree.z);
     const d = tmp.length();
     if (d < 1e-3) tmp.set(1, 0, 0); else tmp.divideScalar(d);

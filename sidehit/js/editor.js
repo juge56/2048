@@ -5,11 +5,11 @@ import { sanitizeObject, MAX_OBJECTS, SHAPES, SIZES, centerX, pathDir } from './
 
 const $ = (id) => document.getElementById(id);
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
-const LABEL = { kicker: 'Kicker', jump: 'Jump', roller: 'Roller', rail: 'Rail', box: 'Box', tree: 'Tree' };
-const SIZE = { kicker: ['S', 'M', 'L', 'XL'], jump: ['S', 'M', 'L'], roller: ['S', 'M', 'L'] };
+const LABEL = { kicker: 'Kicker', jump: 'Jump', roller: 'Roller', rail: 'Rail', box: 'Box', tree: 'Tree', drop: 'Rock drop' };
+const SIZE = { kicker: ['S', 'M', 'L', 'XL'], jump: ['S', 'M', 'L'], roller: ['S', 'M', 'L'], drop: ['S', 'M', 'L'] };
 const SHAPE = { straight: 'straight', rainbow: 'rainbow', z: 'Z', kink: 'kinked', wide: 'wide', flatdown: 'flat-down' };
 const DEFAULTS = {
-  kicker: { s: 1, r: 0 }, jump: { s: 0, r: 0 }, roller: { s: 1, r: 0 }, rail: { len: 14, h: 0.45, r: 0 }, box: { len: 14, h: 0.5, r: 0 }, tree: { s: 1 },
+  kicker: { s: 1, r: 0 }, jump: { s: 0, r: 0 }, roller: { s: 1, r: 0 }, drop: { s: 1, r: 0 }, rail: { len: 14, h: 0.45, r: 0 }, box: { len: 14, h: 0.5, r: 0 }, tree: { s: 1 },
 };
 
 export class Editor {
