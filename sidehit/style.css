@@ -75,7 +75,7 @@ button.on { background: #fff; color: #1b2a44; }
 /* ---- menu ---- */
 #menu {
   position: fixed; inset: 0; overflow-y: auto; touch-action: pan-y; padding: 24px 14px;
-  background: linear-gradient(180deg, rgba(14, 40, 84, .62), rgba(14, 40, 84, .3));
+  background: linear-gradient(180deg, rgba(10, 22, 48, .78), rgba(10, 22, 48, .25) 55%, rgba(10, 22, 48, .55)), url(textures/title.webp) 62% 50% / cover no-repeat #1b2a44;
 }
 .card { max-width: 560px; margin: 0 auto; text-align: center; text-shadow: 0 1px 8px rgba(12, 40, 80, .5); }
 h1 { margin: 0; font-size: clamp(56px, 15vw, 100px); font-weight: 900; font-style: italic; letter-spacing: -.02em; text-transform: uppercase; line-height: .95; }

@@ -13,6 +13,8 @@ The original version is a small clone of [1024](https://play.google.com/store/ap
 
 **Credits:** the rider is based on "Low Poly Snowboarder" (https://skfb.ly/pFzOH) by gamedevme, licensed under Creative Commons Attribution (http://creativecommons.org/licenses/by/4.0/); it was rigged with a skeleton through Higgsfield (Meshy rigging) and recoloured for this game.
 
+**Art:** the sky panorama, snow, grooming, rock and pine-needle textures, board graphics and title image in `sidehit/textures/` were generated with Higgsfield for this project.
+
 It is a static page with no build step. Serve the repo root (for example `python3 -m http.server`) and open `/sidehit/`. Keyboard and touch controls are listed on the menu. It uses a vendored copy of [three.js](https://threejs.org/) (MIT).
 
 ### Notes for the Udacity version

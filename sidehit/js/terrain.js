@@ -109,16 +109,34 @@ export const quality = { trees: 1, treeSides: 7 };
 
 // Sun glints: tiny crystals that flash as the camera moves past them.
 export const sparkle = { value: 1 };
+// Tiling textures painted with Higgsfield (see textures/), shared by every map.
+const textureLoader = new THREE.TextureLoader();
+function tiled(name) {
+  const t = textureLoader.load('textures/' + name + '.webp');
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = 8;
+  return t;
+}
+const rockTex = { value: null };
 function addSparkle(material) {
   material.onBeforeCompile = (shader) => {
     shader.uniforms.uSparkle = sparkle;
+    shader.uniforms.uRock = rockTex;
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', '#include <common>\nvarying vec3 vSnowPos;')
       .replace('#include <project_vertex>', '#include <project_vertex>\nvSnowPos = (modelMatrix * vec4(transformed, 1.0)).xyz;');
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <common>', `#include <common>
-        varying vec3 vSnowPos; uniform float uSparkle;
+        varying vec3 vSnowPos; uniform float uSparkle; uniform sampler2D uRock;
         float snowHash(vec3 p) { p = fract(p * 0.3183099 + 0.1); p *= 17.0; return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }`)
+      .replace('#include <color_fragment>', `#include <color_fragment>
+        // bare rock where the ground is too steep to hold snow (painted grey in the vertex colours)
+        float rockiness = smoothstep(0.78, 0.5, vColor.g);
+        if (rockiness > 0.0) {
+          vec3 rock = texture2D(uRock, vec2(vSnowPos.x + vSnowPos.z, vSnowPos.y) * 0.12).rgb * 1.15;
+          diffuseColor.rgb = mix(diffuseColor.rgb, rock, rockiness);
+        }`)
       .replace('#include <opaque_fragment>', `
         vec3 toEye = cameraPosition - vSnowPos;
         float dist = length(toEye);
@@ -130,28 +148,40 @@ function addSparkle(material) {
   return material;
 }
 
+// Fine surface detail for trees and boulders, which have no UVs: a texture is sampled at the
+// fragment's world position, and only its brightness is used, so snow on the branches stays white.
+function addDetail(material, tex, strength) {
+  material.onBeforeCompile = (shader) => {
+    shader.uniforms.uDetail = { value: tex };
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vWorld;')
+      .replace('#include <project_vertex>', `#include <project_vertex>
+        vec4 wp = vec4(transformed, 1.0);
+        #ifdef USE_INSTANCING
+          wp = instanceMatrix * wp;
+        #endif
+        vWorld = (modelMatrix * wp).xyz;`);
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vWorld; uniform sampler2D uDetail;')
+      .replace('#include <color_fragment>', `#include <color_fragment>
+        float lum = dot(texture2D(uDetail, vec2(vWorld.x + vWorld.z, vWorld.y) * 0.45).rgb, vec3(0.333));
+        float amount = ${strength.toFixed(2)} * (1.0 - smoothstep(0.75, 0.92, vColor.g));
+        diffuseColor.rgb *= mix(1.0, clamp(0.35 + 1.9 * lum, 0.55, 1.45), amount);`);
+  };
+  return material;
+}
+
 let shared = null;
 function sharedAssets() {
   if (shared) return shared;
-  // groomed-snow stripes running down the fall line
-  const c = document.createElement('canvas');
-  c.width = 64; c.height = 4;
-  const g = c.getContext('2d');
-  for (let x = 0; x < 64; x++) {
-    const v = Math.round(243 + 12 * (0.5 + 0.5 * Math.cos((x / 64) * Math.PI * 2)));
-    g.fillStyle = `rgb(${v},${v},${v})`;
-    g.fillRect(x, 0, 1, 4);
-  }
-  const tex = new THREE.CanvasTexture(c);
-  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-  tex.colorSpace = THREE.SRGBColorSpace;
-  tex.anisotropy = 8;
   const lam = (color, extra) => new THREE.MeshLambertMaterial({ color, ...extra });
+  rockTex.value = tiled('rock');
   shared = {
-    snow: addSparkle(new THREE.MeshLambertMaterial({ vertexColors: true, map: tex, side: THREE.DoubleSide, flatShading: true })),
-    powder: addSparkle(new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide, flatShading: true })),
+    snow: addSparkle(new THREE.MeshLambertMaterial({ vertexColors: true, map: tiled('corduroy'), side: THREE.DoubleSide, flatShading: true })),
+    powder: addSparkle(new THREE.MeshLambertMaterial({ vertexColors: true, map: tiled('snow'), side: THREE.DoubleSide, flatShading: true })),
     flags: [0x3ddc84, 0x2f8fff, 0xff4b4b, 0x1c1f28].map((c) => lam(c, { side: THREE.DoubleSide })),
-    treeMat: new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide }),
+    treeMat: addDetail(new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide }), tiled('needles'), 0.9),
+    rockMat: addDetail(new THREE.MeshLambertMaterial({ vertexColors: true }), rockTex.value, 1),
     // 0: broad pine, 1: tall slim pine, 2: boulder
     trees: [pineGeometry(3, 7, 2.2, 1), pineGeometry(4, 9.6, 1.5, 2), rockGeometry(3)],
     farTrees: [pineGeometry(1, 7, 2.2, 1, 4), pineGeometry(2, 9.6, 1.5, 2, 4), rockGeometry(3)],
@@ -372,7 +402,7 @@ export class Terrain {
         col[k] = ((0.93 - 0.05 * off) * (1 - rock) + 0.36 * rock) * shade;
         col[k + 1] = ((0.95 - 0.03 * off) * (1 - rock) + 0.36 * rock) * shade;
         col[k + 2] = (1 - rock + 0.4 * rock) * shade;
-        uv[v * 2] = (x - c) / 0.45; uv[v * 2 + 1] = z / 6;
+        uv[v * 2] = (x - c) / 5; uv[v * 2 + 1] = z / 5;   // one texture tile every 5 m, grooming lines down the fall line
       }
     }
     // split into bands down the hill so off-screen and far-off snow is skipped
@@ -428,7 +458,7 @@ export class Terrain {
     for (const [key, list] of buckets) {
       const kind = ((key % 3) + 3) % 3, pair = { z: (Math.floor(key / 3) + 0.5) * 110 };
       for (const far of [false, true]) {
-        const inst = new THREE.InstancedMesh((far ? a.farTrees : a.trees)[kind], a.treeMat, list.length);
+        const inst = new THREE.InstancedMesh((far ? a.farTrees : a.trees)[kind], kind === 2 ? a.rockMat : a.treeMat, list.length);
         list.forEach((t, i) => {
           q.setFromAxisAngle(UP, hash(t, 1, 2) * 6.28);
           mat.compose(v.set(f[t], f[t + 1], f[t + 2]), q, s.set(f[t + 3], f[t + 3] * (0.9 + 0.3 * hash(t, 3, 4)), f[t + 3]));
@@ -560,7 +590,7 @@ export class Terrain {
         const marker = lip && Math.abs(Math.abs(v) - (b.hw - b.edge)) < 0.45;
         pos.push(x, this.height(x, z) + 0.05, z);
         if (marker) col.push(0.1, 0.45, 1); else if (lip) col.push(1, 0.36, 0.2); else if (face) col.push(0.62, 0.7, 0.84); else col.push(0.93, 0.95, 1);
-        uv.push((x - this.center(z)) / 0.45, z / 6);
+        uv.push((x - this.center(z)) / 5, z / 5);
       }
     });
     for (let j = 0; j < us.length - 1; j++) for (let i = 0; i < nx; i++) {

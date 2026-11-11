@@ -16,7 +16,7 @@ export const LOOK_OPTIONS = {
   jacket2: ['#f07a2a', '#ffe14a', '#ff3d7f', '#22c7e8', '#f2f4f7', '#1c1f28', '#8be04e'],
   board: ['#ff0d38', '#12a5a0', '#ffc928', '#1c1f28', '#f2f4f7', '#2f6fe0', '#8be04e'],
   board2: ['#ffc212', '#f2f4f7', '#1c1f28', '#ff3d7f', '#22c7e8'],
-  boardArt: ['bars', 'split', 'solid'],
+  boardArt: ['ridgeline', 'wolf', 'slash', 'bars', 'split', 'solid'],
 };
 export const DEFAULT_LOOK = Object.fromEntries(Object.entries(LOOK_OPTIONS).map(([k, v]) => [k, v[0]]));
 // Keep only known keys with allowed values, so a stored look can't inject anything odd.
@@ -34,7 +34,7 @@ const NAMES = {
 }
 
 function boardGeometry(drop, colour) {
-  const NZ = 28, NX = 4, HALF = 0.8, R = 0.17, pos = [], col = [], idx = [];
+  const NZ = 28, NX = 4, HALF = 0.8, R = 0.17, pos = [], col = [], idx = [], uv = [];
   for (let j = 0; j <= NZ; j++) {
     const z = -HALF + (2 * HALF * j) / NZ, az = Math.abs(z);
     const tip = az - (HALF - R);
@@ -44,6 +44,7 @@ function boardGeometry(drop, colour) {
       pos.push(-half + (2 * half * i) / NX, 0.03 + lift - drop, z);
       const c = colour(z, i / NX);
       col.push(c.r, c.g, c.b);
+      uv.push((z + HALF) / (2 * HALF), i / NX);
     }
   }
   for (let j = 0; j < NZ; j++) for (let i = 0; i < NX; i++) {
@@ -53,6 +54,7 @@ function boardGeometry(drop, colour) {
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
   g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
   g.setIndex(idx);
   g.computeVertexNormals();
   return g;
@@ -79,7 +81,16 @@ export class Rider {
       parent.add(mesh);
       return mesh;
     };
-    this.deck = add(new THREE.BufferGeometry(), this.m.sheet);
+    // top sheet: painted board graphics (Higgsfield) or two-colour designs
+    this.m.deck = mat(0.4, { vertexColors: true, side: THREE.DoubleSide });
+    this.art = {};
+    for (const [key, file] of [['ridgeline', 'board1'], ['slash', 'board2'], ['wolf', 'board3']]) {
+      const t = new THREE.TextureLoader().load('textures/' + file + '.webp');
+      t.colorSpace = THREE.SRGBColorSpace;
+      t.anisotropy = 4;
+      this.art[key] = t;
+    }
+    this.deck = add(new THREE.BufferGeometry(), this.m.deck);
     this.base = add(boardGeometry(0.02, () => ({ r: 0.03, g: 0.05, b: 0.12 })), this.m.sheet);
     // bindings in a slight duck stance; the boots are part of the model
     for (const s of [1, -1]) {
@@ -182,11 +193,15 @@ export class Rider {
   setLook(raw) {
     const look = (this.style = sanitizeLook(raw)), C = (hex) => new THREE.Color(hex);
     this.m.accent.color.set(look.jacket2);
-    const main = C(look.board), art = C(look.board2);
+    const main = C(look.board), second = C(look.board2);
     this.deck.geometry.dispose();
-    this.deck.geometry = boardGeometry(0, (z, u) => {
-      if (look.boardArt === 'split') return z > 0 ? art : main;
-      if (look.boardArt === 'bars') { const d = z + (u - 0.5) * 0.22; return (d > 0.36 && d < 0.43) || (d > 0.47 && d < 0.5) ? art : main; }
+    const art = this.art[look.boardArt] || null;
+    this.m.deck.map = art;
+    this.m.deck.needsUpdate = true;
+    if (art) { this.deck.geometry = boardGeometry(0, () => ({ r: 1, g: 1, b: 1 })); }
+    else this.deck.geometry = boardGeometry(0, (z, u) => {
+      if (look.boardArt === 'split') return z > 0 ? second : main;
+      if (look.boardArt === 'bars') { const d = z + (u - 0.5) * 0.22; return (d > 0.36 && d < 0.43) || (d > 0.47 && d < 0.5) ? second : main; }
       return main;
     });
     if (!this.original) return;

@@ -1,6 +1,10 @@
 // Sidehit — app shell: rendering, modes (menu / ride / edit), camera, HUD, input.
 import * as THREE from '../vendor/three.module.min.js';
 import { Terrain, sparkle, quality } from './terrain.js';
+import { EffectComposer } from '../vendor/post/EffectComposer.js';
+import { RenderPass } from '../vendor/post/RenderPass.js';
+import { UnrealBloomPass } from '../vendor/post/UnrealBloomPass.js';
+import { OutputPass } from '../vendor/post/OutputPass.js';
 import { Player, airTricks } from './player.js';
 import { Rider, LOOK_OPTIONS, sanitizeLook } from './rider.js';
 import { Sound } from './audio.js';
@@ -37,21 +41,37 @@ sun.shadow.normalBias = 0.06;
 sun.shadow.radius = 3;
 scene.add(hemi, sun, sun.target);
 
-const skyU = { zenith: { value: new THREE.Color() }, horizon: { value: new THREE.Color() }, sunCol: { value: new THREE.Color() }, sunDir: { value: sunDir } };
+// Sky: a golden-hour alpine panorama painted with Higgsfield (textures/sky.webp). The file holds the
+// picture next to its mirror image, so it wraps seamlessly; it repeats twice around the horizon.
+// Above the picture the sky fades to the zenith colour, below it into the valley haze.
+const panorama = new THREE.TextureLoader().load('textures/sky.webp');
+panorama.wrapS = THREE.RepeatWrapping;
+panorama.colorSpace = THREE.SRGBColorSpace;
+const skyU = {
+  zenith: { value: new THREE.Color() }, horizon: { value: new THREE.Color() }, sunCol: { value: new THREE.Color() }, sunDir: { value: sunDir },
+  pano: { value: panorama }, tint: { value: new THREE.Color(1, 1, 1) },
+  // elevation (radians) of the picture's bottom and top edges: keeps its proportions, peaks just above eye level
+  elBot: { value: THREE.MathUtils.degToRad(-22.8) }, elTop: { value: THREE.MathUtils.degToRad(27.8) },
+};
 const sky = new THREE.Mesh(
-  new THREE.SphereGeometry(4500, 24, 12),
+  new THREE.SphereGeometry(4500, 32, 16),
   new THREE.ShaderMaterial({
-    side: THREE.BackSide, depthWrite: false, fog: false, uniforms: skyU,
+    side: THREE.BackSide, depthWrite: false, fog: false, toneMapped: false, uniforms: skyU,
     vertexShader: 'varying vec3 vDir; void main(){ vDir = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
     fragmentShader: `
-      uniform vec3 zenith, horizon, sunCol, sunDir; varying vec3 vDir;
+      uniform vec3 zenith, horizon, sunCol, sunDir, tint; uniform sampler2D pano; uniform float elBot, elTop; varying vec3 vDir;
       void main(){
         vec3 d = normalize(vDir);
-        vec3 col = mix(horizon, zenith, pow(smoothstep(-0.02, 0.5, d.y), 0.55));
+        float el = asin(clamp(d.y, -1.0, 1.0));
+        float v = (el - elBot) / (elTop - elBot);
+        // shifted a quarter turn so the mirror seams sit 45 degrees either side of downhill (+z), not straight ahead
+        float u = atan(d.z, d.x) / 3.14159265 + 0.25;
+        vec3 col = texture2D(pano, vec2(u, clamp(v, 0.004, 0.996))).rgb * tint;
+        col = mix(col, zenith * tint, smoothstep(0.9, 1.25, v));
+        col = mix(col, horizon, smoothstep(0.12, -0.05, v));
         float s = max(dot(d, sunDir), 0.0);
-        col += sunCol * (pow(s, 900.0) * 6.0 + pow(s, 14.0) * 0.3);
+        col += sunCol * pow(s, 900.0) * 3.0;
         gl_FragColor = vec4(col, 1.0);
-        #include <tonemapping_fragment>
         #include <colorspace_fragment>
       }`,
   }),
@@ -80,6 +100,7 @@ function makeRange(radius, base, amp, seed) {
   return m;
 }
 const ranges = [makeRange(4000, -150, 420, 1.3), makeRange(3000, -420, 380, 4.1)];
+for (const r of ranges) r.visible = false;   // kept for reference; the panorama does this job now
 function tintRange(mesh, top, bottom) {
   const c = mesh.geometry.attributes.color;
   for (let i = 0; i < c.count; i++) { const k = i % 2 ? bottom : top; c.setXYZ(i, k.r, k.g, k.b); }
@@ -87,13 +108,15 @@ function tintRange(mesh, top, bottom) {
 }
 
 const SKY = {
-  bluebird: { glint: 1, zenith: 0x1f66cc, haze: 0xc4dcf2, sun: 0xffe9cf, power: 3.1, hemiSky: 0xa9cdfc, hemiGround: 0xf4f8ff, hemi: 1.5, dir: [-0.55, 0.42, 0.62], exposure: 1.4 },
-  golden: { glint: 0.8, zenith: 0x4a6cb5, haze: 0xf3c9a8, sun: 0xffa868, power: 3.6, hemiSky: 0x9fb2e8, hemiGround: 0xffe2d0, hemi: 1.2, dir: [-0.78, 0.2, 0.55], exposure: 1.3 },
-  dusk: { glint: 0.25, zenith: 0x0c1a48, haze: 0x5a6aa6, sun: 0xb4c8ff, power: 1.7, hemiSky: 0x5068b8, hemiGround: 0x93a4d8, hemi: 1.15, dir: [0.45, 0.5, 0.45], exposure: 1.2 },
+  bluebird: { tint: [0.97, 1.02, 1.1], fog: 0xb4bfcf, glint: 1, zenith: 0x1f66cc, haze: 0xc4dcf2, sun: 0xffe9cf, power: 3.1, hemiSky: 0xa9cdfc, hemiGround: 0xf4f8ff, hemi: 1.5, dir: [-0.55, 0.42, 0.62], exposure: 1.4 },
+  golden: { tint: [1, 1, 1], fog: 0xb3a59c, glint: 0.8, zenith: 0x4a6cb5, haze: 0xf3c9a8, sun: 0xffa868, power: 3.6, hemiSky: 0x9fb2e8, hemiGround: 0xffe2d0, hemi: 1.2, dir: [-0.78, 0.2, 0.55], exposure: 1.3 },
+  dusk: { tint: [0.42, 0.48, 0.72], fog: 0x4f5878, glint: 0.25, zenith: 0x0c1a48, haze: 0x5a6aa6, sun: 0xb4c8ff, power: 1.7, hemiSky: 0x5068b8, hemiGround: 0x93a4d8, hemi: 1.15, dir: [0.45, 0.5, 0.45], exposure: 1.2 },
 };
 function applySky(name) {
   const s = SKY[name] || SKY.bluebird, haze = new THREE.Color(s.haze), white = new THREE.Color(0xffffff);
-  skyU.zenith.value.set(s.zenith);
+  skyU.zenith.value.set(0x578cbc);
+  skyU.tint.value.setRGB(...s.tint);
+  haze.set(s.fog);
   skyU.horizon.value.copy(haze);
   skyU.sunCol.value.set(s.sun);
   sunDir.set(...s.dir).normalize();
@@ -106,8 +129,6 @@ function applySky(name) {
   renderer.toneMappingExposure = s.exposure;
   sparkle.value = gfx.mode === 'low' ? 0 : s.glint;
   const z = new THREE.Color(s.zenith);
-  tintRange(ranges[0], haze.clone().lerp(white, 0.6), haze.clone().lerp(z, 0.25));
-  tintRange(ranges[1], haze.clone().lerp(white, 0.3), haze.clone().lerp(z, 0.4));
   document.body.style.background = '#' + haze.getHexString();
 }
 
@@ -234,11 +255,19 @@ function setRatio(r) {
   gfx.ratio = clamp(r, touch ? 0.9 : 0.6, MAX_RATIO);
   renderer.setPixelRatio(gfx.ratio);
   renderer.setSize(innerWidth, innerHeight, false);
+  if (typeof composer !== 'undefined') { composer.setPixelRatio(gfx.ratio); composer.setSize(innerWidth, innerHeight); }
 }
 function setShadows(on) {
   sun.castShadow = on;
   renderer.shadowMap.needsUpdate = true;
 }
+// Bloom on bright snow and the sun, on the High setting only (it costs a lot on phones).
+const composer = new EffectComposer(renderer);
+composer.addPass(new RenderPass(scene, camera));
+const bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.32, 0.55, 0.88);
+composer.addPass(bloom);
+composer.addPass(new OutputPass());
+let useBloom = false;
 function setGraphics(mode) {
   gfx.mode = ['auto', 'low', 'high'].includes(mode) ? mode : 'auto';
   store.set('sidehit.gfx', gfx.mode);
@@ -247,6 +276,7 @@ function setGraphics(mode) {
   setShadows(gfx.mode !== 'low');
   setRatio(gfx.mode === 'low' ? (touch ? 1 : 0.75) : gfx.mode === 'auto' ? Math.min(touch ? 1.5 : 1.25, MAX_RATIO) : MAX_RATIO);
   gfx.drops = gfx.good = 0;
+  useBloom = gfx.mode === 'high';
   sparkle.value = gfx.mode === 'low' ? 0 : (SKY[app.map && app.map.sky] || SKY.bluebird).glint;
   $('b-gfx').textContent = 'Graphics: ' + gfx.mode[0].toUpperCase() + gfx.mode.slice(1);
 }
@@ -360,10 +390,10 @@ function studioFrame(dt) {
 const LOOK_LABELS = { jacket: 'Suit', jacket2: 'Trim', board: 'Deck', board2: 'Art colour', boardArt: 'Design' };
 const LOOK_TABS = { Suit: ['jacket', 'jacket2'], Board: ['board', 'board2', 'boardArt'] };
 const STYLES = [
-  ['Factory', {}],
-  ['Glacier', { jacket: '#12a5a0', jacket2: '#ffe14a', board: '#12a5a0', board2: '#f2f4f7', boardArt: 'split' }],
+  ['Factory', { boardArt: 'ridgeline' }],
+  ['Glacier', { jacket: '#12a5a0', jacket2: '#ffe14a', board: '#12a5a0', board2: '#f2f4f7', boardArt: 'slash' }],
   ['Sunset', { jacket: '#ff3d7f', jacket2: '#ffe14a', board: '#ffc928', board2: '#ff3d7f', boardArt: 'split' }],
-  ['Night Shift', { jacket: '#2a2f3d', jacket2: '#22c7e8', board: '#1c1f28', board2: '#22c7e8', boardArt: 'bars' }],
+  ['Night Shift', { jacket: '#2a2f3d', jacket2: '#22c7e8', board: '#1c1f28', board2: '#22c7e8', boardArt: 'wolf' }],
   ['Citrus', { jacket: '#ffc928', jacket2: '#8be04e', board: '#8be04e', board2: '#f2f4f7', boardArt: 'split' }],
   ['Whiteout', { jacket: '#d8dde6', jacket2: '#1c1f28', board: '#f2f4f7', board2: '#1c1f28', boardArt: 'bars' }],
   ['Grape Soda', { jacket: '#8a4fd8', jacket2: '#ff3d7f', board: '#2f6fe0', board2: '#ff3d7f', boardArt: 'solid' }],
@@ -800,6 +830,8 @@ function updateHud(dt) {
 function resize() {
   renderer.setPixelRatio(gfx.ratio);
   renderer.setSize(innerWidth, innerHeight, false);
+  composer.setPixelRatio(gfx.ratio);
+  composer.setSize(innerWidth, innerHeight);
   camera.aspect = innerWidth / innerHeight;
   camera.updateProjectionMatrix();
 }
@@ -851,7 +883,9 @@ function frame(now) {
   app.terrain.cull(camera.position, FOG_FAR + 40);
   if (sun.castShadow && (frameNo++ & 1) === 0) renderer.shadowMap.needsUpdate = true;
   autoQuality(dt);
-  renderer.render(scene, camera);
+  // the menu has a painted background over the view, so there is nothing to draw behind it
+  if (app.mode === 'menu') return;
+  if (useBloom) composer.render(); else renderer.render(scene, camera);
 }
 
 setGraphics(store.get('sidehit.gfx', 'auto'));
