@@ -214,8 +214,9 @@ export class Player {
       this.slipT -= dt;
       this.yawRate = clamp(toAligned(Math.atan2(v.x, v.z), this.yaw) * 10, -9, 9);
     } else {
-      this.steerS = damp(this.steerS, inp.steer, 9, dt);
-      this.yawRate = damp(this.yawRate, (-this.steerS * 2.3 * Math.min(0.4 + sp / 8, 1)) / (1 + sp / 40), this.powder ? 5 : 8, dt);
+      // the edge comes on progressively: turns build and unwind smoothly rather than snapping
+      this.steerS = damp(this.steerS, inp.steer, 6.5, dt);
+      this.yawRate = damp(this.yawRate, (-this.steerS * 2.3 * Math.min(0.4 + sp / 8, 1)) / (1 + sp / 40), this.powder ? 4 : 6, dt);
     }
     this.yaw += this.yawRate * dt;
     this.wind = damp(this.wind, this.yawRate, 3, dt);
@@ -301,13 +302,13 @@ export class Player {
       // winding up the other way before take-off makes the spin faster
       const want = -inp.steer;
       const top = M.spinBase + (a.wind * want < 0 ? (M.spinMax - M.spinBase) * Math.min(Math.abs(a.wind) / 1.2, 1) : 0);
-      this.spinVel = damp(this.spinVel, want * top, 5, dt);
+      this.spinVel = damp(this.spinVel, want * top, 4, dt);
     } else {
       // stick released: the board settles toward a clean landing (strongly in arcade, barely in sim)
       this.spinVel = damp(this.spinVel, 0, 5, dt);
       this.spinVel += clamp(toAligned(Math.atan2(v.x, v.z), this.yaw) * M.assist, -5, 5) * Math.min(1, 6 * dt);
     }
-    if (Math.abs(inp.pitch) > 0.3) this.flipVel = damp(this.flipVel, inp.pitch * 6.6, 5, dt);
+    if (Math.abs(inp.pitch) > 0.3) this.flipVel = damp(this.flipVel, inp.pitch * 6.6, 4, dt);
     else {
       this.flipVel = damp(this.flipVel, 0, 5, dt);
       this.flipVel += clamp(-wrap(this.flip) * M.assist, -5, 5) * Math.min(1, 6 * dt);

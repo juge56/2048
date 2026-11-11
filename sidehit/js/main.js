@@ -472,6 +472,7 @@ function setMap(map) {
   resetView();
 }
 function resetView() {
+  snapView();
   cam.snap = true;
   cam.dir.set(Math.sin(player.yaw), 0, Math.cos(player.yaw));
   clearTrail();
@@ -631,10 +632,15 @@ addEventListener('blur', () => keys.clear());
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) sound.suspend(); else if (app.mode === 'play') sound.start();
 });
-function readInput() {
+function readInput(dt) {
   const k = (...c) => c.some((x) => keys.has(x));
-  inp.steer = clamp((k('KeyD', 'ArrowRight') ? 1 : 0) - (k('KeyA', 'ArrowLeft') ? 1 : 0) + inp.stick.x, -1, 1);
-  inp.pitch = clamp((k('KeyW', 'ArrowUp') ? 1 : 0) - (k('KeyS', 'ArrowDown') ? 1 : 0) + inp.stick.y, -1, 1);
+  const steer = clamp((k('KeyD', 'ArrowRight') ? 1 : 0) - (k('KeyA', 'ArrowLeft') ? 1 : 0) + inp.stick.x, -1, 1);
+  const pitch = clamp((k('KeyW', 'ArrowUp') ? 1 : 0) - (k('KeyS', 'ArrowDown') ? 1 : 0) + inp.stick.y, -1, 1);
+  // keys and the stick are eased over about a tenth of a second, so a tap gives a gentle line, not a jolt
+  inp.steer = damp(inp.steer, steer, 11, dt);
+  inp.pitch = damp(inp.pitch, pitch, 11, dt);
+  if (Math.abs(inp.steer) < 0.002) inp.steer = 0;
+  if (Math.abs(inp.pitch) < 0.002) inp.pitch = 0;
   inp.jump = k('Space') || inp.tJump;
   inp.brake = k('KeyX', 'ShiftLeft', 'ShiftRight') || inp.tBrake;
   inp.tuck = k('KeyC', 'ControlLeft', 'ControlRight') || inp.tTuck;
@@ -677,22 +683,25 @@ function readInput() {
 const cam = { dir: new THREE.Vector3(0, 0, 1), pos: new THREE.Vector3(), look: new THREE.Vector3(), snap: true, orbit: 0 };
 const tmp = new THREE.Vector3(), tmp2 = new THREE.Vector3(), up = new THREE.Vector3(0, 1, 0), n = new THREE.Vector3();
 function chaseCamera(dt) {
-  const p = player, T = app.terrain, hs = Math.hypot(p.vel.x, p.vel.z);
-  if (hs > 2) tmp.set(p.vel.x / hs, 0, p.vel.z / hs); else tmp.set(Math.sin(p.yaw), 0, Math.cos(p.yaw));
-  cam.dir.lerp(tmp, 1 - Math.exp(-2.6 * dt));
+  const p = player, T = app.terrain, hs = Math.hypot(p.vel.x, p.vel.z), vp = view.pos;
+  if (hs > 2) tmp.set(p.vel.x / hs, 0, p.vel.z / hs); else tmp.set(Math.sin(view.yaw), 0, Math.cos(view.yaw));
+  cam.dir.lerp(tmp, 1 - Math.exp(-2.4 * dt));
   if (cam.dir.lengthSq() < 1e-4) cam.dir.copy(tmp);
   cam.dir.normalize();
-  tmp.copy(p.pos).addScaledVector(cam.dir, -(6.6 + hs * 0.07));
-  tmp.y = Math.max(p.pos.y + 2.3, T.height(tmp.x, tmp.z) + 1.9);
-  tmp2.copy(p.pos).addScaledVector(cam.dir, 5);
-  tmp2.y += 0.7;
+  // close and low behind the rider; eases back with speed and in again while a trick is in the air
+  cam.trick = damp(cam.trick || 0, p.air && p.air.time > 0.3 ? 1 : 0, 2.5, dt);
+  const back = (3.3 + Math.min(hs, 30) * 0.045) * (1 - 0.14 * cam.trick);
+  tmp.copy(vp).addScaledVector(cam.dir, -back);
+  tmp.y = Math.max(vp.y + 1.45, T.height(tmp.x, tmp.z) + 1.25);
+  tmp2.copy(vp).addScaledVector(cam.dir, 3.2);
+  tmp2.y += 0.95;
   if (cam.snap) { cam.pos.copy(tmp); cam.look.copy(tmp2); cam.snap = false; }
-  cam.pos.lerp(tmp, 1 - Math.exp(-5.5 * dt));
-  cam.look.lerp(tmp2, 1 - Math.exp(-7.5 * dt));
-  cam.pos.y = Math.max(cam.pos.y, T.height(cam.pos.x, cam.pos.z) + 1.0);
+  cam.pos.lerp(tmp, 1 - Math.exp(-6 * dt));
+  cam.look.lerp(tmp2, 1 - Math.exp(-8 * dt));
+  cam.pos.y = Math.max(cam.pos.y, T.height(cam.pos.x, cam.pos.z) + 0.8);
   camera.position.copy(cam.pos);
   camera.lookAt(cam.look);
-  setFov(damp(camera.fov, 62 + Math.min(hs, 34) * 0.62, 4, dt));
+  setFov(damp(camera.fov, 60 + Math.min(hs, 34) * 0.5, 3, dt));
 }
 function menuCamera(dt) {
   // slow fly-around of the selected park
@@ -713,6 +722,12 @@ function setFov(f) {
 }
 
 const vis = { railOff: 0, press: 0, sink: 0 };
+// Physics runs in fixed 1/120 s ticks; the screen refreshes at its own rate (60, 90, 120 Hz...).
+// Drawing the last tick as-is makes motion judder, so the rider and camera are drawn at a blend of the
+// last two ticks, matched to exactly where between them this frame falls.
+const view = { pos: new THREE.Vector3(), prev: new THREE.Vector3(), yaw: 0, prevYaw: 0 };
+const wrapAngle = (a) => a - Math.PI * 2 * Math.round(a / (Math.PI * 2));
+function snapView() { view.prev.copy(player.pos); view.pos.copy(player.pos); view.prevYaw = view.yaw = player.yaw; }
 // How bent the legs should be. In the air: extend for the pop, pull the board up, then reach for the landing.
 function riderCrouch(p, onSnow, sp) {
   if (p.rail) return 0.4 + 0.5 * p.charge;
@@ -726,16 +741,17 @@ function riderCrouch(p, onSnow, sp) {
 const basis = new THREE.Matrix4(), bx = new THREE.Vector3(), bz = new THREE.Vector3(), f0 = new THREE.Vector3();
 function updateRider(dt) {
   const p = player, onSnow = p.state === 'ground';
-  if (onSnow) app.terrain.normal(p.pos.x, p.pos.z, n); else n.set(0, 1, 0);
+  const vp = view.pos;
+  if (onSnow) app.terrain.normal(vp.x, vp.z, n); else n.set(0, 1, 0);
   up.lerp(n, 1 - Math.exp(-(onSnow ? 14 : 3) * dt)).normalize();
-  f0.set(Math.sin(p.yaw), 0, Math.cos(p.yaw));
+  f0.set(Math.sin(view.yaw), 0, Math.cos(view.yaw));
   bz.copy(f0).addScaledVector(up, -f0.dot(up)).normalize();
   bx.crossVectors(up, bz);
   basis.makeBasis(bx, up, bz);
   rider.root.quaternion.setFromRotationMatrix(basis);
   // in powder the board rides low at walking pace and planes up with speed
   vis.sink = damp(vis.sink, p.powder && onSnow ? 0.3 * (1 - clamp(p.vel.length() / 14, 0, 1)) : 0, 5, dt);
-  rider.root.position.copy(p.pos).addScaledVector(up, (p.rail ? 0.09 : 0.03) - vis.sink);
+  rider.root.position.copy(vp).addScaledVector(up, (p.rail ? 0.09 : 0.03) - vis.sink);
   vis.railOff = damp(vis.railOff, p.rail ? p.railOff : 0, 12, dt);
   rider.root.position.addScaledVector(bz, -vis.railOff);
   // a press lifts one end of the board off the snow
@@ -744,9 +760,9 @@ function updateRider(dt) {
   rider.body.position.y = -0.8 + Math.abs(Math.sin(vis.press * 0.3)) * 0.6;
   blob.visible = !sun.castShadow && app.mode !== 'custom';
   if (blob.visible) {
-    const gy = app.terrain.height(p.pos.x, p.pos.z), gap = Math.max(p.pos.y - gy, 0);
-    app.terrain.normal(p.pos.x, p.pos.z, tmp);
-    blob.position.set(p.pos.x, gy + 0.06, p.pos.z);
+    const gy = app.terrain.height(vp.x, vp.z), gap = Math.max(vp.y - gy, 0);
+    app.terrain.normal(vp.x, vp.z, tmp);
+    blob.position.set(vp.x, gy + 0.06, vp.z);
     blob.quaternion.setFromUnitVectors(tmp2.set(0, 0, 1), tmp);
     blob.scale.setScalar(1 + gap * 0.12);
     blob.material.opacity = 0.42 * clamp(1 - gap / 7, 0, 1);
@@ -771,12 +787,12 @@ function updateRider(dt) {
   if (onSnow && (p.carve > 0.15 || deep) && sp > 4) {
     // thrown off the edge the rider is standing on, low and back along the track
     const count = Math.min(Math.round((p.carve * 5 + deep * 3) * dt * 60), 6), side = Math.sign(p.yawRate) || 1, kick = 1.2 + p.carve * 2.2;
-    tmp.copy(p.pos).addScaledVector(up, -vis.sink).addScaledVector(bx, side * 0.14);
+    tmp.copy(vp).addScaledVector(up, -vis.sink).addScaledVector(bx, side * 0.14);
     for (let i = 0; i < count; i++) puff(tmp, p.vel.x * 0.55 + p.s3.x * side * kick, 0.4 + p.carve * 1.3 + deep, p.vel.z * 0.55 + p.s3.z * side * kick, 0.8 + p.carve * 1.2);
   }
-  if (trail.last.distanceToSquared(p.pos) > 0.16) {
-    trail.last.copy(p.pos);
-    trailPush(tmp.copy(p.pos).addScaledVector(up, -vis.sink), bx, up, onSnow ? 0.25 + 0.75 * p.carve : 0, p.powder);
+  if (trail.last.distanceToSquared(vp) > 0.16) {
+    trail.last.copy(vp);
+    trailPush(tmp.copy(vp).addScaledVector(up, -vis.sink), bx, up, onSnow ? 0.25 + 0.75 * p.carve : 0, p.powder);
   }
 }
 
@@ -846,9 +862,14 @@ function frame(now) {
   last = now;
   let focus = player.pos;
   if (app.mode === 'play') {
-    readInput();
+    readInput(dt);
     acc += dt;
-    while (acc >= DT) { player.step(DT, inp); acc -= DT; }
+    while (acc >= DT) {
+      view.prev.copy(player.pos);
+      view.prevYaw = player.yaw;
+      player.step(DT, inp);
+      acc -= DT;
+    }
     const m = app.map, p = player.pos;
     // bottom of the hill (or lost in the woods): take the lift back up
     const done = p.z > m.length + 8 && player.state === 'ground';
@@ -858,6 +879,9 @@ function frame(now) {
       player.respawn();
       resetView();
     }
+    const alpha = acc / DT;
+    view.pos.lerpVectors(view.prev, player.pos, alpha);
+    view.yaw = view.prevYaw + wrapAngle(player.yaw - view.prevYaw) * alpha;
     updateRider(dt);
     sound.update(player.vel.length(), player.carve, player.state === 'ground', !!player.rail);
     chaseCamera(dt);
@@ -869,6 +893,7 @@ function frame(now) {
     studioFrame(dt);
     focus = studio.position;
   } else {
+    snapView();
     updateRider(dt);
     menuCamera(dt);
     const fz = app.map.length * 0.35, fx = centerX(app.map, fz);
