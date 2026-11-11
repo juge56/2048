@@ -131,7 +131,8 @@ export class Player {
     this.air = { time: 0, spin: 0, flip: 0, grabs: {}, wind: this.wind, sw: this.sw && !fromRail, nollie: false, fromRail };
     this.grabName = '';
     this.grabHold = 0;
-    this.spinVel = fromRail ? 0 : this.yawRate;
+    // pre-spin: whatever rotation the board had at take-off carries into the air, boosted by the pop
+    this.spinVel = fromRail ? 0 : this.yawRate * 1.6;
     this.flipVel = 0;
   }
 
@@ -266,7 +267,10 @@ export class Player {
     } else {
       // the edge comes on progressively: turns build and unwind smoothly rather than snapping
       this.steerS = damp(this.steerS, inp.steer, 8.5, dt);
-      this.yawRate = damp(this.yawRate, (-this.steerS * 2.3 * Math.min(0.4 + sp / 8, 1)) / (1 + sp / 40), this.powder ? 5 : 7.5, dt);
+      // twist (two-stick control): nose and tail pushed opposite ways pivot the board hard, skidding
+      this.twistS = damp(this.twistS || 0, inp.twist || 0, 10, dt);
+      const pivot = -this.twistS * 2.4 * Math.min(0.5 + sp / 10, 1) / (1 + sp / 60);
+      this.yawRate = damp(this.yawRate, (-this.steerS * 2.3 * Math.min(0.4 + sp / 8, 1)) / (1 + sp / 40) + pivot, this.powder ? 5 : 7.5, dt);
     }
     this.yaw += this.yawRate * dt;
     this.wind = damp(this.wind, this.yawRate, 3, dt);
@@ -284,12 +288,13 @@ export class Player {
     this.sw = vf < -1;
     // tucking is a choice: less drag, held with its own button
     this.tuck = !!inp.tuck && !loose && !this.braking;
-    this.carve = clamp(Math.abs(vs) * (loose ? 0.05 : 0.25) + Math.abs(this.yawRate * vf) * 0.03 + (this.braking ? Math.abs(vf) * 0.08 : 0), 0, 1);
+    this.carve = clamp(Math.abs(vs) * (loose ? 0.05 : 0.25) + Math.abs(this.yawRate * vf) * 0.03 + (this.braking ? Math.abs(vf) * 0.08 : 0) + Math.abs(this.twistS || 0) * 0.6, 0, 1);
     // on its edge the board holds: sideways slip bleeds off fast, forward glide barely at all
     const before = Math.hypot(vf, vs);
-    vs *= Math.exp(-(loose ? 0.4 : this.braking ? 3 : this.powder ? 5 : 9) * dt);
+    const slash = Math.min(Math.abs(this.twistS || 0) * 1.6, 1);   // a twisted board skids instead of holding its edge
+    vs *= Math.exp(-(loose ? 0.4 : this.braking ? 3 : (this.powder ? 5 : 9) * (1 - 0.7 * slash)) * dt);
     // a carving edge redirects momentum, it doesn't throw it away: only a braking skid scrubs speed
-    if (!this.braking) {
+    if (!this.braking && slash < 0.3) {
       const after = Math.hypot(vf, vs);
       if (after > 1e-4) { vf *= before / after; vs *= before / after; }
     }
@@ -312,7 +317,7 @@ export class Player {
       this.charge = 0;
       this.hooks.sound.pop();
       this.beginAir();
-      this.air.nollie = inp.pitch > 0.4;
+      this.air.nollie = inp.pitch > 0.4 || !!inp.nollie;
       return;
     }
     if (!inp.jump) this.charge = 0;
@@ -361,7 +366,9 @@ export class Player {
     } else if (Math.abs(inp.steer) > 0.15) {
       // winding up the other way before take-off makes the spin faster
       const want = -inp.steer;
-      const top = M.spinBase + (a.wind * want < 0 ? (M.spinMax - M.spinBase) * Math.min(Math.abs(a.wind) / 1.2, 1) : 0);
+      // winding up against the spin (counter-rotation) or carving into it (pre-spin) before take-off both add speed
+      const loaded = Math.min(Math.abs(a.wind) / 1.1, 1), counter = a.wind * want < 0;
+      const top = M.spinBase + (M.spinMax - M.spinBase) * loaded * (counter ? 1 : 0.85);
       this.spinVel = damp(this.spinVel, want * top, 4, dt);
     } else {
       // stick released: the board settles toward a clean landing (strongly in arcade, barely in sim)

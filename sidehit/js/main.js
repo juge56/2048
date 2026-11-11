@@ -222,6 +222,7 @@ const store = {
   get(key, fallback) { try { return JSON.parse(localStorage.getItem(key)) ?? fallback; } catch { return fallback; } },
   set(key, value) { try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* storage blocked */ } },
 };
+const ctl = { twin: false };   // control scheme: classic, or twin-stick (nose and tail)
 let look = sanitizeLook(store.get('sidehit.look', null));
 const rider = new Rider(look);
 rider.root.scale.setScalar(1.18);   // a touch larger than life so the rider reads clearly on a phone
@@ -459,6 +460,18 @@ function setRideMode(name) {
 }
 { let saved = 'arcade'; try { saved = localStorage.getItem('sidehit.mode') || 'arcade'; } catch { /* storage blocked */ } setRideMode(MODES[saved] ? saved : 'arcade'); }
 $('b-mode').addEventListener('click', () => setRideMode(player.mode === 'sim' ? 'arcade' : 'sim'));
+function setControls(twin) {
+  ctl.twin = !!twin;
+  store.set('sidehit.twin', ctl.twin);
+  document.body.classList.toggle('twin', ctl.twin);
+  $('b-ctl').textContent = 'Controls: ' + (ctl.twin ? 'Twin-stick' : 'Classic');
+  $('ctlhelp').textContent = ctl.twin
+    ? (touch ? 'Twin-stick: left thumb is the nose, right thumb the tail. Same way to carve, opposite ways to pivot. Push one up to press, both up to tuck. Pull one down and let go to ollie (tail) or nollie (nose); both down to brake. In the air, twist to spin, both up or down to flip.'
+             : 'Twin-stick: WASD is the nose, the arrow keys the tail. Same way to carve, opposite ways to pivot. W or Up presses that end, both to tuck. Hold S or Down and let go to nollie or ollie. In the air, twist to spin, both up or down to flip.')
+    : '';
+}
+setControls(store.get('sidehit.twin', false));
+$('b-ctl').addEventListener('click', () => setControls(!ctl.twin));
 scene.add(editor.marker);
 
 function setMap(map) {
@@ -611,7 +624,7 @@ $('b-mute').addEventListener('click', () => { $('b-mute').textContent = sound.to
 
 // ---------------------------------------------------------------- input ----
 const keys = new Set();
-const inp = { steer: 0, pitch: 0, jump: false, brake: false, tuck: false, grab: '', stick: { x: 0, y: 0 }, tJump: false, tGrab: false, tBrake: false, tTuck: false };
+const inp = { steer: 0, pitch: 0, jump: false, brake: false, tuck: false, grab: '', stick: { x: 0, y: 0 }, stick2: { x: 0, y: 0 }, twist: 0, nollie: false, tJump: false, tGrab: false, tBrake: false, tTuck: false };
 addEventListener('keydown', (e) => {
   if (e.repeat || e.target.matches('input, textarea, select')) return;
   keys.add(e.code);
@@ -633,44 +646,72 @@ addEventListener('blur', () => keys.clear());
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) sound.suspend(); else if (app.mode === 'play') sound.start();
 });
-const keyAxis = { x: 0, y: 0 };
+const keyAxis = { x: { v: 0 }, y: { v: 0 }, tx: { v: 0 }, ty: { v: 0 } };
 function readInput(dt) {
   const k = (...c) => c.some((x) => keys.has(x));
-  // keys are on/off, so they ramp over a few frames; the touch stick is already analogue and goes straight through
-  keyAxis.x = damp(keyAxis.x, (k('KeyD', 'ArrowRight') ? 1 : 0) - (k('KeyA', 'ArrowLeft') ? 1 : 0), 16, dt);
-  keyAxis.y = damp(keyAxis.y, (k('KeyW', 'ArrowUp') ? 1 : 0) - (k('KeyS', 'ArrowDown') ? 1 : 0), 16, dt);
-  if (Math.abs(keyAxis.x) < 0.003) keyAxis.x = 0;
-  if (Math.abs(keyAxis.y) < 0.003) keyAxis.y = 0;
-  inp.steer = clamp(keyAxis.x + inp.stick.x, -1, 1);
-  inp.pitch = clamp(keyAxis.y + inp.stick.y, -1, 1);
   inp.jump = k('Space') || inp.tJump;
   inp.brake = k('KeyX', 'ShiftLeft', 'ShiftRight') || inp.tBrake;
   inp.tuck = k('KeyC', 'ControlLeft', 'ControlRight') || inp.tTuck;
   inp.grab = k('KeyQ', 'KeyE') || inp.tGrab ? 'grab' : '';
+  // keys are on/off, so they ramp over a few frames; the touch sticks are already analogue and go straight through
+  const ramp = (axis, target) => { axis.v = damp(axis.v, target, 16, dt); if (Math.abs(axis.v) < 0.003) axis.v = 0; return axis.v; };
+  if (!ctl.twin) {
+    inp.steer = clamp(ramp(keyAxis.x, (k('KeyD', 'ArrowRight') ? 1 : 0) - (k('KeyA', 'ArrowLeft') ? 1 : 0)) + inp.stick.x, -1, 1);
+    inp.pitch = clamp(ramp(keyAxis.y, (k('KeyW', 'ArrowUp') ? 1 : 0) - (k('KeyS', 'ArrowDown') ? 1 : 0)) + inp.stick.y, -1, 1);
+    inp.twist = 0;
+  } else {
+    // twin-stick: one stick (or WASD) for the nose of the board, the other (or the arrows) for the tail
+    const nx = clamp(ramp(keyAxis.x, (k('KeyD') ? 1 : 0) - (k('KeyA') ? 1 : 0)) + inp.stick.x, -1, 1);
+    const ny = clamp(ramp(keyAxis.y, (k('KeyW') ? 1 : 0) - (k('KeyS') ? 1 : 0)) + inp.stick.y, -1, 1);
+    const tx = clamp(ramp(keyAxis.tx, (k('ArrowRight') ? 1 : 0) - (k('ArrowLeft') ? 1 : 0)) + inp.stick2.x, -1, 1);
+    const ty = clamp(ramp(keyAxis.ty, (k('ArrowUp') ? 1 : 0) - (k('ArrowDown') ? 1 : 0)) + inp.stick2.y, -1, 1);
+    const twist = (nx - tx) / 2, together = (nx + tx) / 2;
+    if (player.state === 'ground') {
+      // same way: carve; opposite ways: twist the board into a pivot
+      inp.steer = clamp(together + twist * 0.5, -1, 1);
+      inp.twist = twist;
+      // stick up = weight that end into the snow (press); both up = tuck; one pulled down = load a pop off that end
+      const noseDown = ny < -0.55, tailDown = ty < -0.55;
+      inp.tuck = inp.tuck || (ny > 0.5 && ty > 0.5);
+      inp.pitch = ny > 0.5 && ty <= 0.5 ? 1 : ty > 0.5 && ny <= 0.5 ? -1 : 0;
+      inp.brake = inp.brake || (noseDown && tailDown);
+      const loading = noseDown !== tailDown;
+      if (loading) inp.nollie = noseDown;
+      inp.jump = inp.jump || loading;
+    } else {
+      // in the air: twisting or pushing sideways spins, both sticks up or down flips
+      inp.steer = clamp(twist * 1.2 + together * 0.6, -1, 1);
+      inp.pitch = clamp((ny + ty) / 2, -1, 1);
+      inp.twist = 0;
+    }
+  }
 }
 {
-  // virtual stick on the left half, buttons on the right
-  const zone = $('stickzone'), pad = $('pad'), nub = $('nub');
-  let id = null, ox = 0, oy = 0;
-  const move = (t) => {
-    const dx = clamp((t.clientX - ox) / 50, -1, 1), dy = clamp((t.clientY - oy) / 50, -1, 1);
-    inp.stick.x = dx;
-    inp.stick.y = -dy;
-    nub.style.transform = `translate(${dx * 34}px, ${dy * 34}px)`;
+  // floating virtual sticks: the left one always, the right one in twin-stick mode
+  const makeStick = (zone, pad, nub, out) => {
+    let id = null, ox = 0, oy = 0;
+    const move = (t) => {
+      const dx = clamp((t.clientX - ox) / 50, -1, 1), dy = clamp((t.clientY - oy) / 50, -1, 1);
+      out.x = dx;
+      out.y = -dy;
+      nub.style.transform = `translate(${dx * 34}px, ${dy * 34}px)`;
+    };
+    zone.addEventListener('touchstart', (e) => {
+      const t = e.changedTouches[0];
+      id = t.identifier; ox = t.clientX; oy = t.clientY;
+      pad.style.left = ox + 'px'; pad.style.top = oy + 'px'; pad.classList.add('on');
+      move(t);
+      e.preventDefault();
+    }, { passive: false });
+    const end = (e) => {
+      for (const t of e.changedTouches) if (t.identifier === id) { id = null; out.x = out.y = 0; pad.classList.remove('on'); nub.style.transform = ''; }
+    };
+    zone.addEventListener('touchmove', (e) => { for (const t of e.changedTouches) if (t.identifier === id) move(t); e.preventDefault(); }, { passive: false });
+    zone.addEventListener('touchend', end);
+    zone.addEventListener('touchcancel', end);
   };
-  zone.addEventListener('touchstart', (e) => {
-    const t = e.changedTouches[0];
-    id = t.identifier; ox = t.clientX; oy = t.clientY;
-    pad.style.left = ox + 'px'; pad.style.top = oy + 'px'; pad.classList.add('on');
-    move(t);
-    e.preventDefault();
-  }, { passive: false });
-  const end = (e) => {
-    for (const t of e.changedTouches) if (t.identifier === id) { id = null; inp.stick.x = inp.stick.y = 0; pad.classList.remove('on'); nub.style.transform = ''; }
-  };
-  zone.addEventListener('touchmove', (e) => { for (const t of e.changedTouches) if (t.identifier === id) move(t); e.preventDefault(); }, { passive: false });
-  zone.addEventListener('touchend', end);
-  zone.addEventListener('touchcancel', end);
+  makeStick($('stickzone'), $('pad'), $('nub'), inp.stick);
+  makeStick($('stickzone2'), $('pad2'), $('nub2'), inp.stick2);
   const hold = (el, prop) => {
     el.addEventListener('touchstart', (e) => { inp[prop] = true; el.classList.add('on'); e.preventDefault(); }, { passive: false });
     for (const ev of ['touchend', 'touchcancel']) el.addEventListener(ev, () => { inp[prop] = false; el.classList.remove('on'); });
@@ -727,9 +768,9 @@ const vis = { railOff: 0, press: 0, sink: 0 };
 // Physics runs in fixed 1/120 s ticks; the screen refreshes at its own rate (60, 90, 120 Hz...).
 // Drawing the last tick as-is makes motion judder, so the rider and camera are drawn at a blend of the
 // last two ticks, matched to exactly where between them this frame falls.
-const view = { pos: new THREE.Vector3(), prev: new THREE.Vector3(), yaw: 0, prevYaw: 0 };
+const view = { pos: new THREE.Vector3(), prev: new THREE.Vector3(), yaw: 0, prevYaw: 0, flip: 0, prevFlip: 0 };
 const wrapAngle = (a) => a - Math.PI * 2 * Math.round(a / (Math.PI * 2));
-function snapView() { view.prev.copy(player.pos); view.pos.copy(player.pos); view.prevYaw = view.yaw = player.yaw; }
+function snapView() { view.prev.copy(player.pos); view.pos.copy(player.pos); view.prevYaw = view.yaw = player.yaw; view.prevFlip = view.flip = player.flip + player.tumble; }
 // How bent the legs should be. In the air: extend for the pop, pull the board up, then reach for the landing.
 function riderCrouch(p, onSnow, sp) {
   if (p.rail) return 0.4 + 0.5 * p.charge;
@@ -772,10 +813,10 @@ function updateRider(dt) {
   p.lean = damp(p.lean || 0, onSnow && !p.press ? clamp(-p.yawRate * sp * 0.035, -0.6, 0.6) : 0, 6, dt);
   rider.leanG.rotation.z = p.lean;
   rider.leanG.rotation.y = damp(rider.leanG.rotation.y, onSnow && p.braking && sp > 1 ? 1.1 : 0, 9, dt);
-  rider.pivot.rotation.x = p.flip + p.tumble;
+  rider.pivot.rotation.x = view.flip;
   // inverted spins are drawn off-axis, like a cork, instead of a flat flip
   vis.cork = damp(vis.cork || 0, p.air && Math.abs(p.flipVel) > 1.5 && Math.abs(p.spinVel) > 2.5 ? Math.sign(p.flipVel * p.spinVel) : 0, 4, dt);
-  rider.pivot.rotation.z = vis.cork * 0.55 * Math.sin(p.flip);
+  rider.pivot.rotation.z = vis.cork * 0.55 * Math.sin(view.flip);
   rider.pose({
     crouch: riderCrouch(p, onSnow, sp),
     pitch: vis.press * 0.3,
@@ -872,6 +913,7 @@ function frame(now) {
     while (acc >= DT) {
       view.prev.copy(player.pos);
       view.prevYaw = player.yaw;
+      view.prevFlip = player.flip + player.tumble;
       player.step(DT, inp);
       acc -= DT;
     }
@@ -887,6 +929,8 @@ function frame(now) {
     const alpha = acc / DT;
     view.pos.lerpVectors(view.prev, player.pos, alpha);
     view.yaw = view.prevYaw + wrapAngle(player.yaw - view.prevYaw) * alpha;
+    const flipNow = player.flip + player.tumble;
+    view.flip = Math.abs(flipNow - view.prevFlip) > 1.5 ? flipNow : view.prevFlip + (flipNow - view.prevFlip) * alpha;
     updateRider(dt);
     sound.update(player.vel.length(), player.carve, player.state === 'ground', !!player.rail);
     chaseCamera(dt);

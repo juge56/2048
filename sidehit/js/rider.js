@@ -135,6 +135,8 @@ export class Rider {
     this.spin = 0;
     this.lookTurn = 0;
     this.v = Array.from({ length: 12 }, () => V());
+    this.hp = [null, null];
+    this.headYaw = 1.15;
     this.q = Array.from({ length: 4 }, () => new THREE.Quaternion());
     this.style = sanitizeLook(look);
     this.setLook(this.style);
@@ -328,7 +330,8 @@ export class Rider {
     this._follow(B.neck);
     // the head stays level and looks down the hill over the lead shoulder
     const hd = this.rest.get(B.head);
-    this._set(B.head, this.q[1].setFromAxisAngle(UP, 0.4 + 0.35 * k + 0.3 * this.twist + 0.75 + 0.35 * this.lookTurn).multiply(this.q[2].setFromAxisAngle(V(0, 0, 1), fold * 0.3)).multiply(hd.quat));
+    this.headYaw = damp(this.headYaw, open + 0.5 + 0.28 * this.lookTurn, 6, dt);
+    this._set(B.head, this.q[1].setFromAxisAngle(UP, this.headYaw).multiply(this.q[2].setFromAxisAngle(V(0, 0, 1), Math.min(fold, 1.1) * 0.35)).multiply(hd.quat));
 
     // ---- legs: hip sockets ride with the pelvis, ankles stay strapped to the board, knees track over the toes
     for (let i = 0; i < 2; i++) {
@@ -358,7 +361,11 @@ export class Rider {
       const gp = GRAB_POSE[this.grabKey] || GRAB_POSE.indy, g = gp.hand === s ? this.grab : 0;
       if (g > 0) hand.lerp(v[7].set(...gp.at), g);                                                 // reach the board
       else if (this.grab > 0.01) { hand.y += 0.3 * this.grab; hand.z += s * 0.18 * this.grab; hand.x += 0.05 * this.grab; }  // free arm up and out for style
-      const elbow = this._ik(sh, hand, L.upper, L.fore, v[4].set(0.9, -0.2, s * 0.5), v[5]);
+      // the hand glides toward where it wants to be instead of jumping there each frame
+      const hp = this.hp[i] || (this.hp[i] = hand.clone());
+      hp.lerp(hand, 1 - Math.exp(-(g > 0 ? 22 : 13) * dt));
+      hand.copy(hp);
+      const elbow = this._ik(sh, hand, L.upper, L.fore, v[4].set(0.6, -0.75, s * 0.55), v[5]);
       this._aim(B.arm[i], B.fore[i], elbow);
       this._aim(B.fore[i], B.hand[i], hand);
       this._follow(B.hand[i]);
