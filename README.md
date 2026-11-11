@@ -11,7 +11,7 @@ The original version is a small clone of [1024](https://play.google.com/store/ap
 - **Build:** tap to place jumps, kickers, rollers, rails (straight, rainbow, Z, kinked), boxes (straight, wide, flat-down) and trees; drag, rotate and resize them; and reshape the hill (steepness, length, width, winding, cliffs, trees, powder, light). Parks save in the browser automatically.
 - **Share:** every park exports as a short JSON code that anyone can paste under Import.
 
-**Credits:** the rider is based on "Low Poly Snowboarder" (https://skfb.ly/pFzOH) by gamedevme, licensed under Creative Commons Attribution (http://creativecommons.org/licenses/by/4.0/); it was rigged and recoloured for this game.
+**Credits:** the rider is based on "Low Poly Snowboarder" (https://skfb.ly/pFzOH) by gamedevme, licensed under Creative Commons Attribution (http://creativecommons.org/licenses/by/4.0/); it was rigged with a skeleton through Higgsfield (Meshy rigging) and recoloured for this game.
 
 It is a static page with no build step. Serve the repo root (for example `python3 -m http.server`) and open `/sidehit/`. Keyboard and touch controls are listed on the menu. It uses a vendored copy of [three.js](https://threejs.org/) (MIT).
 

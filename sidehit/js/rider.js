@@ -1,14 +1,15 @@
 // The rider. The body is "Low Poly Snowboarder" by gamedevme (CC-BY-4.0, see
-// models/snowboarder/license.txt). That model ships as a fixed T-pose with no
-// skeleton, so it is rigged here: every vertex is bound to one or two bones of
-// a small skeleton, and the skeleton is posed each frame with two-bone IK.
+// models/snowboarder/license.txt), rigged with a 24-bone humanoid skeleton and
+// skin weights through Higgsfield (Meshy rigging). The game drives those bones
+// every frame from its riding poses with two-bone IK; the GPU does the skinning.
 // The board and bindings are generated.
 // Local frame: +z is the nose of the board, +y is up, the rider's chest faces -x.
 import * as THREE from '../vendor/three.module.min.js';
+import { GLTFLoader } from '../vendor/GLTFLoader.js';
 
 const V = (x = 0, y = 0, z = 0) => new THREE.Vector3(x, y, z);
 const damp = (a, b, rate, dt) => a + (b - a) * (1 - Math.exp(-rate * dt));
-const smooth = (t) => (t <= 0 ? 0 : t >= 1 ? 1 : t * t * (3 - 2 * t));
+const UP = V(0, 1, 0);
 
 export const LOOK_OPTIONS = {
   jacket: ['#4d7fb3', '#12a5a0', '#ff3d7f', '#ffc928', '#8be04e', '#8a4fd8', '#d8dde6', '#2a2f3d', '#c0392b'],
@@ -25,31 +26,13 @@ export function sanitizeLook(raw) {
   return out;
 }
 
-// ---- skeleton -------------------------------------------------------------
-// Bones, and where their joints sit in the model's T-pose (local frame, metres).
-const PELVIS = 0, CHEST = 1, HEAD = 2, UPPER = 3, FORE = 5, THIGH = 7, SHIN = 9, FOOT = 11, BONES = 13;   // paired bones: +0 front side (+z), +1 back side
-const REST = {
-  hip: V(0, 0.92, 0), neck: V(0, 1.46, 0),
-  shoulder: (s) => V(0, 1.38, s * 0.19), elbow: (s) => V(0, 1.34, s * 0.47), wrist: (s) => V(0, 1.31, s * 0.75),
-  leg: (s) => V(0, 0.9, s * 0.1), knee: (s) => V(0, 0.5, s * 0.15), ankle: (s) => V(0, 0.12, s * 0.18),
-};
-const LEN = { spine: 0.54, upper: 0.28, fore: 0.28, thigh: 0.4, shin: 0.38 };
-
-// Which bones a T-pose vertex follows: [bone, other bone, weight of the first].
-function bind(x, y, z) {
-  const az = Math.abs(z), side = z >= 0 ? 0 : 1;
-  if (y > 1.13 && az > 0.165) {
-    if (az < 0.265) return [UPPER + side, CHEST, smooth((az - 0.165) / 0.1)];
-    return [FORE + side, UPPER + side, smooth((az - 0.41) / 0.12)];
-  }
-  if (y > 1.4) return [HEAD, CHEST, smooth((y - 1.42) / 0.08)];
-  if (y > 0.98) return [CHEST, PELVIS, smooth((y - 1.0) / 0.2)];
-  if (y > 0.82) return [THIGH + side, PELVIS, smooth((0.98 - y) / 0.16)];
-  if (y > 0.43) return [SHIN + side, THIGH + side, smooth((0.57 - y) / 0.14)];
-  return [FOOT + side, SHIN + side, smooth((0.2 - y) / 0.08)];
+// Bones the game drives, by the rig's names. Paired entries are [front foot side (+z), back side].
+const NAMES = {
+  hips: 'Hips', spine: ['Spine02', 'Spine01', 'Spine'], neck: 'neck', head: 'Head',
+  shoulder: ['LeftShoulder', 'RightShoulder'], arm: ['LeftArm', 'RightArm'], fore: ['LeftForeArm', 'RightForeArm'], hand: ['LeftHand', 'RightHand'],
+  thigh: ['LeftUpLeg', 'RightUpLeg'], shin: ['LeftLeg', 'RightLeg'], foot: ['LeftFoot', 'RightFoot'],
 }
 
-// Deck and base as two thin shaped sheets: rounded tips, sidecut, kicked nose and tail.
 function boardGeometry(drop, colour) {
   const NZ = 28, NX = 4, HALF = 0.8, R = 0.17, pos = [], col = [], idx = [];
   for (let j = 0; j <= NZ; j++) {
@@ -74,6 +57,7 @@ function boardGeometry(drop, colour) {
   g.computeVertexNormals();
   return g;
 }
+
 
 export class Rider {
   constructor(look) {
@@ -115,74 +99,30 @@ export class Rider {
     }
 
     this.crouch = 0;
+    this.crouchVel = 0;
     this.grab = 0;
     this.air = 0;
     this.flail = 0;
     this.tuck = 0;
     this.edge = 0;
     this.shift = 0;
-    this.crouchVel = 0;
     this.twist = 0;
     this.spin = 0;
-    this.look = 0;
-    this.j = { hip: V(), neck: V(), sh: [V(), V()], elbow: [V(), V()], hand: [V(), V()], leg: [V(), V()], knee: [V(), V()], ankle: [V(), V()] };
-    // per bone: rest origin, current origin, current rotation
-    this.rest = [];
-    this.at = [];
-    this.rot = [];
-    for (let i = 0; i < BONES; i++) { this.rest.push(V()); this.at.push(V()); this.rot.push(new THREE.Quaternion()); }
-    this.rest[PELVIS].copy(REST.hip); this.rest[CHEST].copy(REST.hip); this.rest[HEAD].copy(REST.neck);
-    [1, -1].forEach((s, i) => {
-      this.rest[UPPER + i].copy(REST.shoulder(s)); this.rest[FORE + i].copy(REST.elbow(s));
-      this.rest[THIGH + i].copy(REST.leg(s)); this.rest[SHIN + i].copy(REST.knee(s)); this.rest[FOOT + i].copy(REST.ankle(s));
-    });
-    this._c = V(); this._d = V(); this._e = V(); this._p = V(); this._q = V(); this._u = V(); this._w = V();
-    this._qa = new THREE.Quaternion(); this._qb = new THREE.Quaternion();
+    this.lookTurn = 0;
+    this.v = Array.from({ length: 12 }, () => V());
+    this.q = Array.from({ length: 4 }, () => new THREE.Quaternion());
     this.style = sanitizeLook(look);
     this.setLook(this.style);
   }
 
-  // Fetch the model and bind it to the skeleton. Resolves when the rider can be drawn.
+  // Load the rigged model and record its rest pose in the body's frame.
   async load(dir) {
-    // model.json is scene.gltf with scene.bin packed inside as base64, so it can be served as one plain data file
-    const [gltf, image] = await Promise.all([
-      fetch(dir + 'model.json').then((r) => r.json()),
+    const [pack, image] = await Promise.all([
+      fetch(dir + 'rigged.json').then((r) => r.json()),
       new Promise((ok, fail) => { const im = new Image(); im.onload = () => ok(im); im.onerror = fail; im.src = dir + 'baseColor.webp'; }),
     ]);
-    const bin = Uint8Array.from(atob(gltf.binBase64), (ch) => ch.charCodeAt(0)).buffer;
-    const read = (i) => {
-      const a = gltf.accessors[i], view = gltf.bufferViews[a.bufferView], n = { VEC3: 3, VEC2: 2, SCALAR: 1 }[a.type];
-      const start = (view.byteOffset || 0) + (a.byteOffset || 0), stride = view.byteStride || n * 4;
-      const out = a.componentType === 5126 ? new Float32Array(a.count * n) : new Uint32Array(a.count * n), data = new DataView(bin);
-      for (let k = 0; k < a.count; k++) for (let c = 0; c < n; c++) {
-        out[k * n + c] = a.componentType === 5126 ? data.getFloat32(start + k * stride + c * 4, true) : data.getUint32(start + k * stride + c * 4, true);
-      }
-      return out;
-    };
-    // merge the model's meshes, turning it to stand across the board: model (x, y, z-up) -> local (y, z, x)
-    const P = [], N = [], UV = [], I = [];
-    for (const mesh of gltf.meshes) for (const prim of mesh.primitives) {
-      const p = read(prim.attributes.POSITION), nm = read(prim.attributes.NORMAL), uv = read(prim.attributes.TEXCOORD_0), ix = read(prim.indices), base = P.length / 3;
-      for (let k = 0; k < p.length; k += 3) { P.push(p[k + 1], p[k + 2], p[k]); N.push(nm[k + 1], nm[k + 2], nm[k]); }
-      for (const v of uv) UV.push(v);
-      for (const v of ix) I.push(base + v);
-    }
-    const count = P.length / 3;
-    this.p0 = new Float32Array(P);
-    this.n0 = new Float32Array(N);
-    this.bones = new Uint8Array(count * 2);
-    this.weight = new Float32Array(count);
-    for (let k = 0; k < count; k++) {
-      const [a, b, w] = bind(P[k * 3], P[k * 3 + 1], P[k * 3 + 2]);
-      this.bones[k * 2] = a; this.bones[k * 2 + 1] = b; this.weight[k] = w;
-    }
-    this.pos = new Float32Array(count * 3);
-    this.nor = new Float32Array(count * 3);
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.BufferAttribute(this.pos, 3));
-    geo.setAttribute('normal', new THREE.BufferAttribute(this.nor, 3));
-    geo.setAttribute('uv', new THREE.Float32BufferAttribute(UV, 2));
-    geo.setIndex(I);
+    const glb = Uint8Array.from(atob(pack.glbBase64), (ch) => ch.charCodeAt(0)).buffer;
+    const gltf = await new Promise((ok, fail) => new GLTFLoader().parse(glb, '', ok, fail));
 
     // the suit colours are changed by repainting the model's texture
     const size = 1024, canvas = document.createElement('canvas');
@@ -194,10 +134,47 @@ export class Rider {
     this.texture.flipY = false;
     this.texture.colorSpace = THREE.SRGBColorSpace;
     this.texture.anisotropy = 4;
-    this.skin = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ map: this.texture, roughness: 0.7, side: THREE.DoubleSide }));
-    this.skin.castShadow = true;
-    this.skin.frustumCulled = false;
-    this.body.add(this.skin);
+
+    // the model faces +z with its left side at +x; turn it to face -x, which puts its left foot forward (+z)
+    this.model = new THREE.Group();
+    this.model.rotation.y = -Math.PI / 2;
+    this.model.add(gltf.scene);
+    this.body.add(this.model);
+    gltf.scene.traverse((o) => {
+      if (!o.isSkinnedMesh) return;
+      o.material = new THREE.MeshStandardMaterial({ map: this.texture, roughness: 0.7, side: THREE.DoubleSide });
+      o.castShadow = true;
+      o.frustumCulled = false;
+      this.skin = o;
+    });
+    const find = (name) => gltf.scene.getObjectByName(name);
+    const B = (this.bones = {});
+    for (const [key, name] of Object.entries(NAMES)) B[key] = Array.isArray(name) ? name.map(find) : find(name);
+    this.armature = find('Hips').parent;
+
+    // rest pose, in the body's frame: position, orientation and local rotation of every bone
+    this.body.updateWorldMatrix(true, true);
+    const toBody = new THREE.Matrix4().copy(this.body.matrixWorld).invert(), m = new THREE.Matrix4(), s = V();
+    this.rest = new Map();
+    gltf.scene.traverse((o) => {
+      if (!o.isBone && o !== this.armature) return;
+      m.multiplyMatrices(toBody, o.matrixWorld);
+      const pos = V(), quat = new THREE.Quaternion();
+      m.decompose(pos, quat, s);
+      this.rest.set(o, { pos, quat, local: o.quaternion.clone() });
+    });
+    const P = (b) => this.rest.get(b).pos;
+    this.len = {
+      thigh: P(B.thigh[0]).distanceTo(P(B.shin[0])), shin: P(B.shin[0]).distanceTo(P(B.foot[0])),
+      upper: P(B.arm[0]).distanceTo(P(B.fore[0])), fore: P(B.fore[0]).distanceTo(P(B.hand[0])),
+      spine: P(B.hips).distanceTo(P(B.neck)),
+    };
+    this.restHip = P(B.hips).clone();
+    this.ankleY = (P(B.foot[0]).y + P(B.foot[1]).y) / 2;
+    // the armature's own frame in the body, for turning body-space targets into bone-local values
+    this.armQuat = this.rest.get(this.armature).quat.clone();
+    this.armToBody = new THREE.Matrix4().multiplyMatrices(toBody, this.armature.matrixWorld);
+    this.bodyToArm = this.armToBody.clone().invert();
     this.setLook(this.style);
     this.pose({}, 1 / 60);
   }
@@ -231,25 +208,48 @@ export class Rider {
 
   // Two-bone IK: place the middle joint so both bones keep their length.
   _ik(a, b, l1, l2, bend, out) {
-    const d = this._e.copy(b).sub(a), dist = Math.min(d.length(), l1 + l2 - 1e-3);
+    const d = this.v[10].copy(b).sub(a), dist = Math.min(d.length(), l1 + l2 - 1e-3);
     d.normalize();
     const x = (l1 * l1 - l2 * l2 + dist * dist) / (2 * dist || 1);
     const h = Math.sqrt(Math.max(l1 * l1 - x * x, 0));
-    const perp = this._d.copy(bend).addScaledVector(d, -bend.dot(d)).normalize();
+    const perp = this.v[11].copy(bend).addScaledVector(d, -bend.dot(d)).normalize();
     return out.copy(a).addScaledVector(d, x).addScaledVector(perp, h);
   }
 
-  // Aim a bone: it starts at `from` and points at `to`; in the T-pose it pointed along `restDir`.
-  _aim(bone, from, to, restDir) {
-    this.at[bone].copy(from);
-    this.rot[bone].setFromUnitVectors(restDir, this._u.copy(to).sub(from).normalize());
+  // ---- forward kinematics in body space --------------------------------
+  // Each posed bone gets a body-space orientation; its local rotation is that relative to its parent's.
+  _set(bone, bodyQuat) {
+    const parent = bone.parent, pq = parent === this.armature ? this.armQuat : this.cur.get(parent).quat;
+    bone.quaternion.copy(pq).invert().multiply(bodyQuat);
+    const r = this.rest.get(bone), c = this.cur.get(bone) || this.cur.set(bone, { quat: new THREE.Quaternion(), pos: V() }).get(bone);
+    c.quat.copy(bodyQuat);
+    if (parent !== this.armature) {
+      // position follows the parent: rest offset carried by the parent's change of orientation
+      const pr = this.rest.get(parent), pc = this.cur.get(parent);
+      c.pos.copy(r.pos).sub(pr.pos).applyQuaternion(this.q[3].copy(pr.quat).invert()).applyQuaternion(pc.quat).add(pc.pos);
+    }
+    return c;
+  }
+  // Keep the bone's rest rotation relative to its (posed) parent.
+  _follow(bone) {
+    const parent = bone.parent, pr = this.rest.get(parent), pc = this.cur.get(parent), r = this.rest.get(bone);
+    return this._set(bone, this.q[2].copy(pc.quat).multiply(this.q[3].copy(pr.quat).invert()).multiply(r.quat));
+  }
+  // Turn the bone so that, from where it now sits, it points at the target (its child joint lands there).
+  _aim(bone, child, target) {
+    const r = this.rest.get(bone), parentPose = this._follow(bone), from = parentPose.pos;
+    const restDir = this.v[8].copy(this.rest.get(child).pos).sub(r.pos).normalize();
+    const curDir = this.v[9].copy(restDir).applyQuaternion(this.q[1].copy(r.quat).invert()).applyQuaternion(parentPose.quat).normalize();
+    const want = this.v[10].copy(target).sub(from).normalize();
+    return this._set(bone, this.q[0].setFromUnitVectors(curDir, want).multiply(parentPose.quat));
   }
 
   // t: { crouch 0..1, grab '' | 'indy' | 'mute', airborne, bail, tuck, edge -1..1 (heel..toe), shift -1..1 (tail..nose),
   //      twist -1..1, spin 0..1, look -1..1, time }
   pose(t, dt) {
     if (!this.skin) return;
-    const grabbing = !!t.grab, j = this.j, at = this.at, rot = this.rot;
+    const B = this.bones, L = this.len, v = this.v, grabbing = !!t.grab;
+    // legs are a spring: they compress on a landing and rebound, instead of sliding to the new height
     const want = grabbing ? 1.25 : t.bail ? 0.5 : (t.crouch || 0), h = Math.min(dt, 1 / 30);
     this.crouchVel += ((want - this.crouch) * 150 - this.crouchVel * 15) * h;
     this.crouch = Math.max(this.crouch + this.crouchVel * h, -0.05);
@@ -259,78 +259,70 @@ export class Rider {
     this.tuck = damp(this.tuck, t.tuck ? 1 : 0, 9, dt);
     this.edge = damp(this.edge, t.edge || 0, 8, dt);
     this.shift = damp(this.shift, t.shift || 0, 9, dt);
-    this.twist = damp(this.twist, t.twist || 0, 10, dt);   // upper body wound against, or leading, the rotation
-    this.spin = damp(this.spin, t.spin || 0, 8, dt);        // 0..1: how hard the rider is spinning or flipping
-    this.look = damp(this.look, t.look || 0, 6, dt);        // head turning into the carve
-    const c = this.crouch, time = t.time || 0, k = this.tuck, e = this.edge, air = this.air, w = this.shift;
+    this.twist = damp(this.twist, t.twist || 0, 10, dt);
+    this.spin = damp(this.spin, t.spin || 0, 8, dt);
+    this.lookTurn = damp(this.lookTurn, t.look || 0, 6, dt);
+    const c = this.crouch, k = this.tuck, e = this.edge, air = this.air, w = this.shift, time = t.time || 0;
+    this.cur = this.cur || new Map();
 
-    // Stance: knees bent and driven over the toes, hips stacked over the board, back fairly straight.
-    // Toe edge (e > 0) moves the hips toward the toes; heel edge sits them back. A press (w) slides them along the board.
-    const hip = j.hip.set(0.02 + 0.06 * c - 0.08 * e + 0.05 * k, 0.87 - 0.3 * c - 0.1 * k, 0.2 * w);
-    const fold = 0.1 + 0.28 * Math.min(c, 1.3) + 0.6 * k - 0.07 * e;
-    const neck = j.neck.set(hip.x - Math.sin(fold) * LEN.spine, hip.y + Math.cos(fold) * LEN.spine, hip.z + 0.1 * w);
-    const up = this._w.set(0, 1, 0);
-    this._aim(PELVIS, hip, neck, up);
-    // shoulders turn a little toward the direction of travel, more in a tuck
-    const open = 0.38 + 0.3 * k + 0.6 * this.twist;
-    this._qa.setFromAxisAngle(up, open);
-    at[CHEST].copy(hip);
-    rot[CHEST].copy(rot[PELVIS]).multiply(this._qa);
+    // ---- targets in body space
+    // hips sink and sit back as the knees bend; toe edge drives them forward, a press slides them along the board
+    const lift = 0.045;   // board and binding height under the boots
+    const hip = v[0].set(this.restHip.x + 0.03 + 0.05 * c - 0.07 * e + 0.05 * k, this.restHip.y + lift - 0.05 - 0.3 * c - 0.1 * k, 0.18 * w);
+    const fold = 0.12 + 0.3 * Math.min(c, 1.3) + 0.6 * k - 0.07 * e;              // how far the torso leans over the board
+    const open = 0.4 + 0.3 * k + 0.6 * this.twist;                                   // shoulders turned toward the nose
+    const spineDir = v[1].set(-Math.sin(fold), Math.cos(fold), 0.06 * w);
+
+    // ---- spine and head
+    const hips = B.hips, hr = this.rest.get(hips);
+    // hips: aim the spine, keep the pelvis square to the board otherwise
+    const restSpine = v[2].copy(this.rest.get(B.neck).pos).sub(hr.pos).normalize();
+    const hq = this.q[0].setFromUnitVectors(restSpine, spineDir).multiply(hr.quat);
+    hips.position.copy(hip).applyMatrix4(this.bodyToArm);
+    const hc = this._set(hips, hq);
+    hc.pos.copy(hip);
+    // chest twist spread over the three spine bones
+    for (const bone of B.spine) {
+      const pc = this._follow(bone);
+      this._set(bone, this.q[1].setFromAxisAngle(spineDir, open / 3).multiply(pc.quat));
+    }
+    this._follow(B.neck);
     // the head stays level and looks down the hill over the lead shoulder
-    at[HEAD].copy(neck);
-    rot[HEAD].setFromAxisAngle(up, 0.38 + 0.3 * k + 0.3 * this.twist + 0.85 + 0.35 * this.look).premultiply(this._qb.setFromAxisAngle(this._p.set(0, 0, 1), fold * 0.25));
+    const hd = this.rest.get(B.head);
+    this._set(B.head, this.q[1].setFromAxisAngle(UP, 0.4 + 0.35 * k + 0.3 * this.twist + 0.75 + 0.35 * this.lookTurn).multiply(this.q[2].setFromAxisAngle(V(0, 0, 1), fold * 0.3)).multiply(hd.quat));
 
-    const bend = this._c, down = this._q.set(0, -1, 0);
+    // ---- legs: hip sockets ride with the pelvis, ankles stay strapped to the board, knees track over the toes
     for (let i = 0; i < 2; i++) {
-      const s = i ? -1 : 1, side = this._p.set(0, 0, s);
-      // legs: hip sockets ride with the pelvis, ankles stay strapped to the board, knees track out over the toes
-      j.leg[i].copy(REST.leg(s)).sub(REST.hip).applyQuaternion(rot[PELVIS]).add(hip);
-      j.ankle[i].set(0.01, 0.165, s * 0.27);
-      this._ik(j.leg[i], j.ankle[i], LEN.thigh, LEN.shin, bend.set(-1, 0.1, s * 0.55), j.knee[i]);
-      this._aim(THIGH + i, j.leg[i], j.knee[i], down);
-      this._aim(SHIN + i, j.knee[i], j.ankle[i], down);
-      at[FOOT + i].copy(j.ankle[i]);
-      rot[FOOT + i].setFromAxisAngle(up, s * 0.2);
+      const s = i ? -1 : 1, thigh = B.thigh[i];
+      const socket = this._follow(thigh).pos;
+      const ankle = v[3].set(0.0, this.ankleY + lift, s * 0.26);
+      const knee = this._ik(socket, ankle, L.thigh, L.shin, v[4].set(-1, 0.1, s * 0.5), v[5]);
+      this._aim(thigh, B.shin[i], knee);
+      this._aim(B.shin[i], B.foot[i], ankle);
+      // feet stay flat on the board, toes pointing across it, with a slight duck stance
+      const fr = this.rest.get(B.foot[i]);
+      this._follow(B.foot[i]);
+      this._set(B.foot[i], this.q[1].setFromAxisAngle(UP, -s * 0.2).multiply(fr.quat));
+    }
 
-      // arms: shoulders ride with the chest. Riding: lead hand out over the nose, rear hand over the tail,
-      // both in front of the body at about waist height. In the air they lift and spread for balance.
-      const sh = j.sh[i].copy(REST.shoulder(s)).sub(REST.hip).applyQuaternion(rot[CHEST]).add(hip), hand = j.hand[i];
-      hand.set(sh.x - 0.06 - 0.04 * s - 0.04 * air, sh.y - 0.47 + 0.34 * air, sh.z + s * 0.2 * (1 + 1.1 * air));
-      hand.y += 0.1 * Math.abs(e); hand.z += s * 0.08 * Math.abs(e);   // arms lift and spread a touch for balance on edge
-      // spinning or flipping: arms pull in tight to the chest to rotate faster
-      if (this.spin > 0.01) hand.lerp(this._e.set(sh.x - 0.2, sh.y - 0.16, sh.z - s * 0.1), 0.75 * this.spin);
-      if (k > 0.01) {
-        // tuck: lead hand low in front, rear hand tucked behind the back
-        hand.lerp(s > 0 ? this._e.set(hip.x - 0.32, hip.y + 0.04, hip.z + 0.14) : this._e.set(hip.x + 0.17, hip.y + 0.12, hip.z - 0.08), k);
-      }
-      if (this.flail > 0.01) {
-        hand.x += this.flail * 0.3 * Math.sin(time * 17 + s);
-        hand.y += this.flail * (0.4 + 0.3 * Math.sin(time * 13 + s * 2));
-      }
+    // ---- arms: relaxed at the sides; lifted and spread in the air; pulled in when spinning
+    for (let i = 0; i < 2; i++) {
+      const s = i ? -1 : 1;
+      this._follow(B.shoulder[i]);
+      const sh = this._follow(B.arm[i]).pos, hand = v[6];
+      hand.set(sh.x - 0.05 - 0.05 * air, sh.y - 0.36 + 0.3 * air, sh.z + s * (0.16 + 0.22 * air));
+      hand.y += 0.08 * Math.abs(e); hand.z += s * 0.07 * Math.abs(e);
+      if (this.spin > 0.01) hand.lerp(v[7].set(sh.x - 0.2, sh.y - 0.15, sh.z - s * 0.1), 0.75 * this.spin);
+      // tuck: lead hand low in front, rear hand tucked behind the back
+      if (k > 0.01) hand.lerp(s > 0 ? v[7].set(hip.x - 0.32, hip.y + 0.05, hip.z + 0.14) : v[7].set(hip.x + 0.17, hip.y + 0.12, hip.z - 0.08), k);
+      if (this.flail > 0.01) { hand.x += this.flail * 0.3 * Math.sin(time * 17 + s); hand.y += this.flail * (0.4 + 0.3 * Math.sin(time * 13 + s * 2)); }
       const g = this.grab * ((t.grab === 'mute') === (s === 1) ? 1 : 0);
-      if (g > 0) hand.lerp(this._e.set(-0.17, 0.07, s * 0.03), g);
-      else if (this.grab > 0.01) { hand.y += 0.24 * this.grab; hand.z += s * 0.14 * this.grab; }   // the free arm goes up and out
-      this._ik(sh, hand, LEN.upper, LEN.fore, bend.set(1, -0.15, s * 0.45), j.elbow[i]);
-      this._aim(UPPER + i, sh, j.elbow[i], side);
-      this._aim(FORE + i, j.elbow[i], hand, side);
+      if (g > 0) hand.lerp(v[7].set(-0.17, 0.09, s * 0.03), g);                                   // reach the toe edge
+      else if (this.grab > 0.01) { hand.y += 0.24 * this.grab; hand.z += s * 0.14 * this.grab; }  // free arm up and out
+      const elbow = this._ik(sh, hand, L.upper, L.fore, v[4].set(0.9, -0.2, s * 0.5), v[5]);
+      this._aim(B.arm[i], B.fore[i], elbow);
+      this._aim(B.fore[i], B.hand[i], hand);
+      this._follow(B.hand[i]);
     }
-
-    // skin: each vertex follows its two bones
-    const p0 = this.p0, n0 = this.n0, pos = this.pos, nor = this.nor, bones = this.bones, weight = this.weight, rest = this.rest, a = this._u, b = this._e, na = this._c, nb = this._d;
-    for (let k = 0, n = weight.length; k < n; k++) {
-      const i = k * 3, b0 = bones[k * 2], b1 = bones[k * 2 + 1], w = weight[k];
-      a.set(p0[i], p0[i + 1], p0[i + 2]).sub(rest[b0]).applyQuaternion(rot[b0]).add(at[b0]);
-      na.set(n0[i], n0[i + 1], n0[i + 2]).applyQuaternion(rot[b0]);
-      if (w < 0.999) {
-        b.set(p0[i], p0[i + 1], p0[i + 2]).sub(rest[b1]).applyQuaternion(rot[b1]).add(at[b1]);
-        nb.set(n0[i], n0[i + 1], n0[i + 2]).applyQuaternion(rot[b1]);
-        a.lerp(b, 1 - w);
-        na.lerp(nb, 1 - w).normalize();
-      }
-      pos[i] = a.x; pos[i + 1] = a.y; pos[i + 2] = a.z;
-      nor[i] = na.x; nor[i + 1] = na.y; nor[i + 2] = na.z;
-    }
-    this.skin.geometry.attributes.position.needsUpdate = true;
-    this.skin.geometry.attributes.normal.needsUpdate = true;
   }
 }
