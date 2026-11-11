@@ -224,6 +224,7 @@ const store = {
 };
 let look = sanitizeLook(store.get('sidehit.look', null));
 const rider = new Rider(look);
+rider.root.scale.setScalar(1.18);   // a touch larger than life so the rider reads clearly on a phone
 rider.load('models/snowboarder/').catch(() => flash('Rider model failed to load', 'bad'));
 scene.add(rider.root);
 let flashTimer = 0;
@@ -632,19 +633,20 @@ addEventListener('blur', () => keys.clear());
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) sound.suspend(); else if (app.mode === 'play') sound.start();
 });
+const keyAxis = { x: 0, y: 0 };
 function readInput(dt) {
   const k = (...c) => c.some((x) => keys.has(x));
-  const steer = clamp((k('KeyD', 'ArrowRight') ? 1 : 0) - (k('KeyA', 'ArrowLeft') ? 1 : 0) + inp.stick.x, -1, 1);
-  const pitch = clamp((k('KeyW', 'ArrowUp') ? 1 : 0) - (k('KeyS', 'ArrowDown') ? 1 : 0) + inp.stick.y, -1, 1);
-  // keys and the stick are eased over about a tenth of a second, so a tap gives a gentle line, not a jolt
-  inp.steer = damp(inp.steer, steer, 11, dt);
-  inp.pitch = damp(inp.pitch, pitch, 11, dt);
-  if (Math.abs(inp.steer) < 0.002) inp.steer = 0;
-  if (Math.abs(inp.pitch) < 0.002) inp.pitch = 0;
+  // keys are on/off, so they ramp over a few frames; the touch stick is already analogue and goes straight through
+  keyAxis.x = damp(keyAxis.x, (k('KeyD', 'ArrowRight') ? 1 : 0) - (k('KeyA', 'ArrowLeft') ? 1 : 0), 16, dt);
+  keyAxis.y = damp(keyAxis.y, (k('KeyW', 'ArrowUp') ? 1 : 0) - (k('KeyS', 'ArrowDown') ? 1 : 0), 16, dt);
+  if (Math.abs(keyAxis.x) < 0.003) keyAxis.x = 0;
+  if (Math.abs(keyAxis.y) < 0.003) keyAxis.y = 0;
+  inp.steer = clamp(keyAxis.x + inp.stick.x, -1, 1);
+  inp.pitch = clamp(keyAxis.y + inp.stick.y, -1, 1);
   inp.jump = k('Space') || inp.tJump;
   inp.brake = k('KeyX', 'ShiftLeft', 'ShiftRight') || inp.tBrake;
   inp.tuck = k('KeyC', 'ControlLeft', 'ControlRight') || inp.tTuck;
-  inp.grab = k('KeyQ') ? 'mute' : k('KeyE') || inp.tGrab ? 'indy' : '';
+  inp.grab = k('KeyQ', 'KeyE') || inp.tGrab ? 'grab' : '';
 }
 {
   // virtual stick on the left half, buttons on the right
@@ -685,7 +687,7 @@ const tmp = new THREE.Vector3(), tmp2 = new THREE.Vector3(), up = new THREE.Vect
 function chaseCamera(dt) {
   const p = player, T = app.terrain, hs = Math.hypot(p.vel.x, p.vel.z), vp = view.pos;
   if (hs > 2) tmp.set(p.vel.x / hs, 0, p.vel.z / hs); else tmp.set(Math.sin(view.yaw), 0, Math.cos(view.yaw));
-  cam.dir.lerp(tmp, 1 - Math.exp(-2.4 * dt));
+  cam.dir.lerp(tmp, 1 - Math.exp(-3.4 * dt));
   if (cam.dir.lengthSq() < 1e-4) cam.dir.copy(tmp);
   cam.dir.normalize();
   // close and low behind the rider; eases back with speed and in again while a trick is in the air
@@ -751,12 +753,11 @@ function updateRider(dt) {
   rider.root.quaternion.setFromRotationMatrix(basis);
   // in powder the board rides low at walking pace and planes up with speed
   vis.sink = damp(vis.sink, p.powder && onSnow ? 0.3 * (1 - clamp(p.vel.length() / 14, 0, 1)) : 0, 5, dt);
-  rider.root.position.copy(vp).addScaledVector(up, (p.rail ? 0.09 : 0.03) - vis.sink);
+  rider.root.position.copy(vp).addScaledVector(up, (p.rail ? (p.rail.wide ? 0.035 : 0.11) : 0.03) - vis.sink);
   vis.railOff = damp(vis.railOff, p.rail ? p.railOff : 0, 12, dt);
   rider.root.position.addScaledVector(bz, -vis.railOff);
   // a press lifts one end of the board off the snow
   vis.press = damp(vis.press, onSnow ? p.pressLocal : p.rail && Math.abs(inp.pitch) > 0.5 ? Math.sign(inp.pitch) : 0, 10, dt);
-  rider.body.rotation.x = vis.press * 0.3;
   rider.body.position.y = -0.8 + Math.abs(Math.sin(vis.press * 0.3)) * 0.6;
   blob.visible = !sun.castShadow && app.mode !== 'custom';
   if (blob.visible) {
@@ -772,14 +773,18 @@ function updateRider(dt) {
   rider.leanG.rotation.z = p.lean;
   rider.leanG.rotation.y = damp(rider.leanG.rotation.y, onSnow && p.braking && sp > 1 ? 1.1 : 0, 9, dt);
   rider.pivot.rotation.x = p.flip + p.tumble;
+  // inverted spins are drawn off-axis, like a cork, instead of a flat flip
+  vis.cork = damp(vis.cork || 0, p.air && Math.abs(p.flipVel) > 1.5 && Math.abs(p.spinVel) > 2.5 ? Math.sign(p.flipVel * p.spinVel) : 0, 4, dt);
+  rider.pivot.rotation.z = vis.cork * 0.55 * Math.sin(p.flip);
   rider.pose({
     crouch: riderCrouch(p, onSnow, sp),
+    pitch: vis.press * 0.3,
     tuck: onSnow && p.tuck, edge: onSnow ? clamp(p.lean / 0.45, -1, 1) : 0, shift: vis.press * 0.85,
     // wind the shoulders against the turn while loading a jump, then lead the spin with them in the air
     twist: onSnow ? inp.steer * p.charge * 0.9 : p.air ? clamp(p.spinVel / 7, -1, 1) * 0.8 : 0,
     spin: p.air ? clamp(Math.max(Math.abs(p.spinVel) / 7, Math.abs(p.flipVel) / 6) - 0.15, 0, 1) : 0,
     look: onSnow ? clamp(p.yawRate / 1.6, -1, 1) : 0,
-    grab: p.air && p.air.time > 0.12 ? inp.grab : '',
+    grab: p.air ? p.grabName : '', grabHold: p.grabHold,
     airborne: !!p.rail || (p.state === 'air' && p.air.time > 0.15), bail: p.bail > 0, time: p.time,
   }, dt);
 

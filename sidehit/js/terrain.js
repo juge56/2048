@@ -8,6 +8,7 @@ export const ROLLER = [{ H: 0.8, L: 10, w: 8 }, { H: 1.5, L: 16, w: 10 }, { H: 2
 export const JUMP = [{ H: 2.0, T: 9, D: 6, R: 15, w: 9 }, { H: 3.0, T: 13, D: 9, R: 21, w: 11 }, { H: 4.2, T: 18, D: 13, R: 28, w: 13 }];
 const SIDE = 130, CELL = 8, F = 5;   // F: numbers stored per forest tree
 const UP = new THREE.Vector3(0, 1, 0);
+const RAIL_SIZE = 1.35;   // rails and boxes stand taller and read better than their nominal height
 const RAIL_COLOURS = [0xffc928, 0xff3d7f, 0xff7a1a, 0x22c7e8, 0x8be04e];
 
 function hash(ix, iz, s) {
@@ -321,7 +322,7 @@ export class Terrain {
     for (const r of this.rails) {
       const o = r.o;
       if (o.lip === false) continue;
-      const H = Math.max(o.h - 0.08, 0.2), L = Math.max(3.2, H * 5.5), w = (r.width || 0.4) + 2.6, back = L + 0.5;
+      const H = Math.max(r.h - 0.1, 0.25), L = Math.max(3.4, H * 5.5), w = (r.width || 0.5) + 2.8, back = L + 0.5;
       const sin = Math.sin(o.r), cos = Math.cos(o.r);
       r.lip = { o: null, type: 'kicker', x: o.x - sin * back, z: o.z - cos * back, sin, cos, H, len: L, hw: w / 2, T: L, D: 0, R: 0, edge: 1, rad2: (L + 3) ** 2 + (w / 2) ** 2 };
       this.bumps.push(r.lip);
@@ -330,10 +331,10 @@ export class Terrain {
 
   // A rail or box as a chain of straight segments the rider slides along.
   railPath(o) {
-    const sin = Math.sin(o.r), cos = Math.cos(o.r), L = o.len;
+    const sin = Math.sin(o.r), cos = Math.cos(o.r), L = o.len, h = o.h * RAIL_SIZE;
     const at = (u, v, y) => {
       const x = o.x + u * sin + v * cos, z = o.z + u * cos - v * sin;
-      return new THREE.Vector3(x, y === undefined ? this.height(x, z) + o.h : y, z);
+      return new THREE.Vector3(x, y === undefined ? this.height(x, z) + h : y, z);
     };
     let pts;
     if (o.k === 'rainbow') {
@@ -359,8 +360,8 @@ export class Terrain {
       segs.push({ p0: pts[i], p1: pts[i + 1], dir: dir.divideScalar(len), len, s0: total });
       total += len;
     }
-    const wide = o.t === 'box', width = wide ? (o.k === 'wide' ? 2 : 0.62) : 0;
-    return { o, pts, segs, total, wide, width, reach: wide ? (o.k === 'wide' ? 1.6 : 1.15) : 0.9 };
+    const wide = o.t === 'box', width = wide ? (o.k === 'wide' ? 2.4 : 0.85) : 0;
+    return { o, pts, segs, total, wide, width, h, reach: wide ? (o.k === 'wide' ? 1.9 : 1.3) : 1 };
   }
 
   hitTree(x, y, z) {
@@ -626,16 +627,16 @@ export class Terrain {
     const ball = (p, rad, mat) => { const m = add(a.ball, mat); m.scale.setScalar(rad); m.position.copy(p); };
     const p = new THREE.Vector3(), foot = new THREE.Vector3(), top = new THREE.Vector3(), across = new THREE.Vector3(), basis = new THREE.Matrix4();
     let since = 4;
-    if (!r.wide) ball(r.pts[0], 0.058, a.rails[tint]);
+    if (!r.wide) ball(r.pts[0], 0.085, a.rails[tint]);
     for (const sg of r.segs) {
       across.crossVectors(UP, sg.dir).normalize();
       if (r.wide) {
         const q = new THREE.Quaternion().setFromRotationMatrix(basis.makeBasis(across, new THREE.Vector3().crossVectors(sg.dir, across), sg.dir));
         p.copy(sg.p0).add(sg.p1).multiplyScalar(0.5);
         const body = add(a.cube, a.boxSides[tint]);
-        body.scale.set(r.width, 0.34, sg.len + 0.02);
+        body.scale.set(r.width, 0.42, sg.len + 0.02);
         body.quaternion.copy(q);
-        body.position.copy(p).y -= 0.19;
+        body.position.copy(p).y -= 0.23;
         const sheet = add(a.cube, a.boxTop);
         sheet.scale.set(r.width - 0.1, 0.03, sg.len);
         sheet.quaternion.copy(q);
@@ -646,8 +647,8 @@ export class Terrain {
           tube(sg.p0.clone().add(off), sg.p1.clone().add(off), 0.028, a.steel);
         }
       } else {
-        tube(sg.p0, sg.p1, 0.058, a.rails[tint]);
-        ball(sg.p1, 0.058, a.rails[tint]);
+        tube(sg.p0, sg.p1, 0.085, a.rails[tint]);
+        ball(sg.p1, 0.085, a.rails[tint]);
       }
       // legs with feet on the snow
       // one pair of legs roughly every four metres, however finely the rail is segmented

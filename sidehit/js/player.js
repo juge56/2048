@@ -16,19 +16,46 @@ export const MODES = {
 
 const n = new THREE.Vector3(), f0 = new THREE.Vector3(), tmp = new THREE.Vector3(), tmp2 = new THREE.Vector3();
 
+// Grabs, chosen by where the stick points when Grab goes down (stick right = toward the toe edge side).
+// Hand and edge follow common usage: Indy = rear hand toe edge, Mute = front hand toe edge,
+// Melon = front hand heel edge, Stalefish = rear hand heel edge behind the leg, Method = tweaked melon.
+export const GRABS = {
+  indy: { name: 'Indy', pts: 160 }, mute: { name: 'Mute', pts: 170 }, melon: { name: 'Melon', pts: 180 },
+  stalefish: { name: 'Stalefish', pts: 220 }, method: { name: 'Method', pts: 260 }, japan: { name: 'Japan', pts: 280 },
+  nose: { name: 'Nose Grab', pts: 200 }, tail: { name: 'Tail Grab', pts: 190 }, roastbeef: { name: 'Roast Beef', pts: 240 },
+};
+// stick sectors, counter-clockwise from "right"
+const GRAB_RING = ['mute', 'japan', 'nose', 'method', 'melon', 'stalefish', 'tail', 'roastbeef'];
+export function pickGrab(x, y) {
+  if (Math.hypot(x, y) < 0.35) return 'indy';
+  const sector = Math.round(Math.atan2(y, x) / (Math.PI / 4));
+  return GRAB_RING[(sector + 8) % 8];
+}
+
 export function airTricks(a) {
   const list = [];
   const halves = Math.round(Math.abs(a.spin) / Math.PI), deg = halves * 180;
-  if (halves >= 1) {
-    const fs = a.spin > 0;
-    let name = (fs ? 'FS ' : 'BS ') + deg, pts = 50 * halves * (halves + 1);
-    if (a.fromRail) name = deg + ' Out';
-    else if (a.sw) { name = (fs ? 'Cab ' : 'Sw BS ') + deg; pts *= 1.2; }
-    list.push({ name, pts: Math.round(pts) });
+  const flips = Math.round(Math.abs(a.flip) / TAU), back = a.flip < 0;
+  if (flips >= 1 && halves >= 1 && !a.fromRail) {
+    // inverted spins: backflip + spin is a rodeo (up to 540) or a cork; frontflip + spin is a misty
+    let kind = back ? (deg <= 540 ? 'Rodeo' : 'Cork') : 'Misty';
+    const prefix = ['', '', 'Double ', 'Triple '][Math.min(flips, 3)];
+    list.push({ name: (a.sw ? 'Switch ' : '') + prefix + kind + ' ' + deg, pts: Math.round((400 * flips * (flips + 1) + 60 * halves * (halves + 1)) * 1.25 * (a.sw ? 1.2 : 1)) });
+  } else {
+    if (halves >= 1) {
+      const fs = a.spin > 0;
+      let name = (fs ? 'FS ' : 'BS ') + deg, pts = 50 * halves * (halves + 1);
+      if (a.fromRail) name = deg + ' Out';
+      else if (a.sw) { name = (fs ? 'Cab ' : 'Sw BS ') + deg; pts *= 1.2; }
+      list.push({ name, pts: Math.round(pts) });
+    }
+    if (flips >= 1) list.push({ name: ['', '', 'Double ', 'Triple '][Math.min(flips, 3)] + (back ? 'Backflip' : 'Frontflip'), pts: 400 * flips * (flips + 1) });
   }
-  const flips = Math.round(Math.abs(a.flip) / TAU);
-  if (flips >= 1) list.push({ name: ['', '', 'Double ', 'Triple '][Math.min(flips, 3)] + (a.flip > 0 ? 'Frontflip' : 'Backflip'), pts: 400 * flips * (flips + 1) });
-  if (a.grab > 0.25) list.push({ name: a.grabName === 'mute' ? 'Mute' : 'Indy', pts: Math.round(150 + 350 * a.grab) });
+  for (const [key, time] of Object.entries(a.grabs || {})) {
+    if (time < 0.2) continue;
+    const g = GRABS[key], tweaked = time > 0.6;
+    list.push({ name: (tweaked ? 'Tweaked ' : '') + g.name, pts: Math.round(g.pts + 300 * Math.min(time, 1.5)) });
+  }
   if (a.nollie && a.time > 0.45 && !a.fromRail) list.push({ name: 'Nollie', pts: 80 });
   if (a.time > 1.1) list.push({ name: 'Big Air', pts: Math.round(a.time * 120) });
   return list;
@@ -60,7 +87,7 @@ export class Player {
       yaw: 0, yawRate: 0, spinVel: 0, flip: 0, flipVel: 0, grounded: true, charge: 0, jumpHeld: false,
       carve: 0, braking: false, tuck: false, wind: 0, sw: false,
       press: 0, pressLocal: 0, pressT: 0, butter: 0, pressItem: null, slipT: 0,
-      air: null, rail: null, railSeg: null, railS: 0, railV: 0, railCd: 0, railItem: null, railOff: 0, steerS: 0, absorb: 0,
+      air: null, rail: null, railSeg: null, railS: 0, railV: 0, railCd: 0, railItem: null, railOff: 0, railLip: false, grabName: '', grabHold: 0, steerS: 0, absorb: 0,
       bail: 0, tumble: 0, comboTimer: 0, time: 0,
     });
     this.combo.length = 0;
@@ -101,7 +128,9 @@ export class Player {
     this.endPress(false);
     this.grounded = false;
     this.rail = null;
-    this.air = { time: 0, spin: 0, flip: 0, grab: 0, grabName: '', wind: this.wind, sw: this.sw && !fromRail, nollie: false, fromRail };
+    this.air = { time: 0, spin: 0, flip: 0, grabs: {}, wind: this.wind, sw: this.sw && !fromRail, nollie: false, fromRail };
+    this.grabName = '';
+    this.grabHold = 0;
     this.spinVel = fromRail ? 0 : this.yawRate;
     this.flipVel = 0;
   }
@@ -140,6 +169,7 @@ export class Player {
     else this.stepAir(dt, inp);
 
     if (this.bail <= 0 && this.collideTree() > 6) this.crash('Tree!');
+    if (this.bail <= 0 && !this.rail && this.collideRails() > 9) this.crash('Rail!');
     if (this.combo.length && this.grounded && !this.rail && !this.press) {
       this.comboTimer -= dt;
       if (this.comboTimer <= 0) this.bank();
@@ -158,6 +188,26 @@ export class Player {
     const into = -(this.vel.x * tmp.x + this.vel.z * tmp.z);
     if (into > 0) { this.vel.x += tmp.x * into * 1.15; this.vel.z += tmp.z * into * 1.15; }
     return Math.max(into, 0);
+  }
+
+  // Rails and boxes are solid: anything below the top of one is pushed out to the side (or back off its
+  // end), and the part of the rider's speed going into it is removed. Returns the speed of the impact.
+  collideRails() {
+    let worst = 0;
+    for (const r of this.terrain.rails) for (const sg of r.segs) {
+      const t = clamp(tmp.copy(this.pos).sub(sg.p0).dot(sg.dir), 0, sg.len);
+      tmp2.copy(sg.p0).addScaledVector(sg.dir, t);
+      const below = tmp2.y - this.pos.y;            // how far the rider is under the top of the rail here
+      if (below < 0.18 || below > 2.5) continue;    // standing on it, about to land on it, or well under it
+      const dx = this.pos.x - tmp2.x, dz = this.pos.z - tmp2.z, d = Math.hypot(dx, dz), reach = (r.width || 0.17) / 2 + 0.32;
+      if (d >= reach) continue;
+      const nx = d > 1e-4 ? dx / d : -sg.dir.z, nz = d > 1e-4 ? dz / d : sg.dir.x;
+      this.pos.x = tmp2.x + nx * reach;
+      this.pos.z = tmp2.z + nz * reach;
+      const into = -(this.vel.x * nx + this.vel.z * nz);
+      if (into > 0) { this.vel.x += nx * into; this.vel.z += nz * into; worst = Math.max(worst, into); }
+    }
+    return worst;
   }
 
   // ---- presses and butters ---------------------------------------------
@@ -215,8 +265,8 @@ export class Player {
       this.yawRate = clamp(toAligned(Math.atan2(v.x, v.z), this.yaw) * 10, -9, 9);
     } else {
       // the edge comes on progressively: turns build and unwind smoothly rather than snapping
-      this.steerS = damp(this.steerS, inp.steer, 6.5, dt);
-      this.yawRate = damp(this.yawRate, (-this.steerS * 2.3 * Math.min(0.4 + sp / 8, 1)) / (1 + sp / 40), this.powder ? 4 : 6, dt);
+      this.steerS = damp(this.steerS, inp.steer, 8.5, dt);
+      this.yawRate = damp(this.yawRate, (-this.steerS * 2.3 * Math.min(0.4 + sp / 8, 1)) / (1 + sp / 40), this.powder ? 5 : 7.5, dt);
     }
     this.yaw += this.yawRate * dt;
     this.wind = damp(this.wind, this.yawRate, 3, dt);
@@ -298,7 +348,17 @@ export class Player {
     this.pos.addScaledVector(v, dt);
     this.charge = 0;
 
-    if (Math.abs(inp.steer) > 0.15) {
+    // grab: the stick direction when Grab goes down picks the grab
+    if (inp.grab && a.time > 0.1) {
+      if (!this.grabName) { this.grabName = pickGrab(inp.steer, inp.pitch); this.grabHold = 0; }
+      this.grabHold += dt;
+      a.grabs[this.grabName] = (a.grabs[this.grabName] || 0) + dt;
+    } else this.grabName = '';
+    if (this.grabName) {
+      // holding a grab: carry the rotation you already had, no new input
+      this.spinVel *= Math.exp(-0.35 * dt);
+      this.flipVel *= Math.exp(-0.35 * dt);
+    } else if (Math.abs(inp.steer) > 0.15) {
       // winding up the other way before take-off makes the spin faster
       const want = -inp.steer;
       const top = M.spinBase + (a.wind * want < 0 ? (M.spinMax - M.spinBase) * Math.min(Math.abs(a.wind) / 1.2, 1) : 0);
@@ -308,7 +368,8 @@ export class Player {
       this.spinVel = damp(this.spinVel, 0, 5, dt);
       this.spinVel += clamp(toAligned(Math.atan2(v.x, v.z), this.yaw) * M.assist, -5, 5) * Math.min(1, 6 * dt);
     }
-    if (Math.abs(inp.pitch) > 0.3) this.flipVel = damp(this.flipVel, inp.pitch * 6.6, 4, dt);
+    if (this.grabName) { /* rotation carried, see above */ }
+    else if (Math.abs(inp.pitch) > 0.3) this.flipVel = damp(this.flipVel, inp.pitch * 6.6, 4, dt);
     else {
       this.flipVel = damp(this.flipVel, 0, 5, dt);
       this.flipVel += clamp(-wrap(this.flip) * M.assist, -5, 5) * Math.min(1, 6 * dt);
@@ -317,7 +378,6 @@ export class Player {
     this.flip += this.flipVel * dt;
     a.spin += this.spinVel * dt;
     a.flip += this.flipVel * dt;
-    if (inp.grab && a.time > 0.12) { a.grab += dt; a.grabName = inp.grab; }
 
     if (this.railCd <= 0 && a.time > 0.02 && v.y < 4) {
       for (const r of this.terrain.rails) for (const sg of r.segs) {
@@ -339,6 +399,9 @@ export class Player {
     const a = this.air, v = this.vel;
     // which part of the board came down over the rail: + toward the nose, - toward the tail
     this.railOff = r.width > 1 ? 0 : clamp((point.x - this.pos.x) * Math.sin(this.yaw) + (point.z - this.pos.z) * Math.cos(this.yaw), -0.5, 0.5);
+    // lipslide: the tail swings over the rail instead of the nose
+    const side = (point.x - this.pos.x) * Math.cos(this.yaw) - (point.z - this.pos.z) * Math.sin(this.yaw);
+    this.railLip = Math.sign(side || 1) === Math.sign(a.spin || this.spinVel || 1);
     const quarters = Math.round(Math.abs(a.spin) / HALF);
     if (quarters >= 2) {
       this.combo.push({ name: quarters * 90 + ' On', pts: 80 * quarters });
@@ -381,7 +444,7 @@ export class Player {
     if (!sideways) {
       if (inp.pitch > 0.5) { name = 'Nose Press'; mult = 1.3; }
       else if (inp.pitch < -0.5) { name = '5-0'; mult = 1.3; }
-    } else if (Math.abs(this.railOff) < 0.22) { name = (facing ? 'BS' : 'FS') + ' Boardslide'; mult = 1.4; }
+    } else if (Math.abs(this.railOff) < 0.22) { name = (facing ? 'BS ' : 'FS ') + (this.railLip ? 'Lipslide' : 'Boardslide'); mult = this.railLip ? 1.6 : 1.4; }
     else if (this.railOff > 0) { name = facing ? 'Noseslide' : 'Noseblunt'; mult = facing ? 1.7 : 2; }
     else { name = facing ? 'Bluntslide' : 'Tailslide'; mult = facing ? 2 : 1.7; }
     this.railItem.name = name;

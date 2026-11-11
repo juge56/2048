@@ -26,6 +26,20 @@ export function sanitizeLook(raw) {
   return out;
 }
 
+// Grab animations: which hand (1 = front, -1 = rear), where it takes the board (body space: -x toe edge,
+// +x heel edge, +z nose), and how the board is tweaked [pitch, roll, yaw] once the grab is held.
+const GRAB_POSE = {
+  indy: { hand: -1, at: [-0.17, 0.1, -0.03], tweak: [0, -0.1, 0.18] },
+  mute: { hand: 1, at: [-0.17, 0.1, 0.03], tweak: [0, -0.12, -0.18] },
+  melon: { hand: 1, at: [0.18, 0.1, 0.06], tweak: [0, 0.22, -0.1] },
+  stalefish: { hand: -1, at: [0.19, 0.1, -0.14], tweak: [0, 0.25, 0.15] },
+  method: { hand: 1, at: [0.2, 0.12, 0.08], tweak: [0.2, 0.6, -0.35] },
+  japan: { hand: 1, at: [-0.18, 0.1, 0.22], tweak: [-0.3, -0.35, -0.1] },
+  nose: { hand: 1, at: [0, 0.12, 0.6], tweak: [0.4, 0, 0] },
+  tail: { hand: -1, at: [0, 0.12, -0.6], tweak: [-0.4, 0, 0] },
+  roastbeef: { hand: -1, at: [0.17, 0.08, 0.02], tweak: [0.1, 0.3, -0.2] },
+};
+
 // Bones the game drives, by the rig's names. Paired entries are [front foot side (+z), back side].
 const NAMES = {
   hips: 'Hips', spine: ['Spine02', 'Spine01', 'Spine'], neck: 'neck', head: 'Head',
@@ -265,7 +279,10 @@ export class Rider {
     if (!this.skin) return;
     const B = this.bones, L = this.len, v = this.v, grabbing = !!t.grab;
     // legs are a spring: they compress on a landing and rebound, instead of sliding to the new height
-    const want = grabbing ? 1.25 : t.bail ? 0.5 : (t.crouch || 0), h = Math.min(dt, 1 / 30);
+    const want = grabbing ? 1.55 : t.bail ? 0.5 : (t.crouch || 0), h = Math.min(dt, 1 / 30);
+    // the grab being held, and how far it is tweaked out (grows the longer it is held)
+    if (grabbing) this.grabKey = t.grab;
+    this.tweakAmt = damp(this.tweakAmt || 0, grabbing ? Math.min(0.45 + (t.grabHold || 0) * 1.2, 1) : 0, 8, dt);
     this.crouchVel += ((want - this.crouch) * 150 - this.crouchVel * 15) * h;
     this.crouch = Math.max(this.crouch + this.crouchVel * h, -0.05);
     this.grab = damp(this.grab, grabbing ? 1 : 0, 14, dt);
@@ -280,11 +297,18 @@ export class Rider {
     const c = this.crouch, k = this.tuck, e = this.edge, air = this.air, w = this.shift, time = t.time || 0;
     this.cur = this.cur || new Map();
 
+    {
+      const tw = (GRAB_POSE[this.grabKey] || GRAB_POSE.indy).tweak, a = this.tweakAmt;
+      this.body.rotation.x = (t.pitch || 0) + tw[0] * a;
+      this.body.rotation.z = tw[1] * a;
+      this.body.rotation.y = tw[2] * a;
+    }
     // ---- targets in body space
     // hips sink and sit back as the knees bend; toe edge drives them forward, a press slides them along the board
     const lift = 0.045;   // board and binding height under the boots
-    const hip = v[0].set(this.restHip.x + 0.03 + 0.05 * c - 0.07 * e + 0.05 * k, this.restHip.y + lift - 0.05 - 0.3 * c - 0.1 * k, 0.18 * w);
-    const fold = 0.12 + 0.3 * Math.min(c, 1.3) + 0.6 * k - 0.07 * e;              // how far the torso leans over the board
+    const gr = this.grab;
+    const hip = v[0].set(this.restHip.x + 0.03 + 0.05 * c - 0.07 * e + 0.05 * k + 0.08 * gr, this.restHip.y + lift - 0.05 - 0.3 * Math.min(c, 1.3) - 0.1 * k - 0.14 * gr, 0.18 * w);
+    const fold = 0.12 + 0.3 * Math.min(c, 1.3) + 0.6 * k - 0.07 * e + 0.8 * gr;   // how far the torso leans over the board
     const open = 0.4 + 0.3 * k + 0.6 * this.twist;                                   // shoulders turned toward the nose
     const spineDir = v[1].set(-Math.sin(fold), Math.cos(fold), 0.06 * w);
 
@@ -331,9 +355,9 @@ export class Rider {
       // tuck: lead hand low in front, rear hand tucked behind the back
       if (k > 0.01) hand.lerp(s > 0 ? v[7].set(hip.x - 0.32, hip.y + 0.05, hip.z + 0.14) : v[7].set(hip.x + 0.17, hip.y + 0.12, hip.z - 0.08), k);
       if (this.flail > 0.01) { hand.x += this.flail * 0.3 * Math.sin(time * 17 + s); hand.y += this.flail * (0.4 + 0.3 * Math.sin(time * 13 + s * 2)); }
-      const g = this.grab * ((t.grab === 'mute') === (s === 1) ? 1 : 0);
-      if (g > 0) hand.lerp(v[7].set(-0.17, 0.09, s * 0.03), g);                                   // reach the toe edge
-      else if (this.grab > 0.01) { hand.y += 0.24 * this.grab; hand.z += s * 0.14 * this.grab; }  // free arm up and out
+      const gp = GRAB_POSE[this.grabKey] || GRAB_POSE.indy, g = gp.hand === s ? this.grab : 0;
+      if (g > 0) hand.lerp(v[7].set(...gp.at), g);                                                 // reach the board
+      else if (this.grab > 0.01) { hand.y += 0.3 * this.grab; hand.z += s * 0.18 * this.grab; hand.x += 0.05 * this.grab; }  // free arm up and out for style
       const elbow = this._ik(sh, hand, L.upper, L.fore, v[4].set(0.9, -0.2, s * 0.5), v[5]);
       this._aim(B.arm[i], B.fore[i], elbow);
       this._aim(B.fore[i], B.hand[i], hand);
