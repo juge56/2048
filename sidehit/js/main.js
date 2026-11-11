@@ -193,6 +193,9 @@ function trailPush(p, side, up, depth, deep) {
 
 // ---------------------------------------------------------------- state ----
 if (touch) { quality.trees = 0.55; quality.treeSides = 5; }
+const blob = new THREE.Mesh(new THREE.CircleGeometry(0.75, 20), new THREE.MeshBasicMaterial({ color: 0x0a1630, map: spray.points.material.map, transparent: true, opacity: 0.4, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3 }));
+blob.renderOrder = 1;
+scene.add(blob);
 const sound = new Sound();
 const store = {
   get(key, fallback) { try { return JSON.parse(localStorage.getItem(key)) ?? fallback; } catch { return fallback; } },
@@ -225,10 +228,10 @@ const app = {
 const editor = new Editor(app);
 
 // Graphics: Auto scales the resolution to hold the frame rate; Low also drops shadows.
-const MAX_RATIO = Math.min(devicePixelRatio, 1.5);
+const MAX_RATIO = Math.min(devicePixelRatio, touch ? 2 : 1.5);
 const gfx = { mode: 'auto', ratio: 1, time: 0, frames: 0, slow: 0, good: 0, drops: 0, fps: 0 };
 function setRatio(r) {
-  gfx.ratio = clamp(r, 0.6, MAX_RATIO);
+  gfx.ratio = clamp(r, touch ? 0.9 : 0.6, MAX_RATIO);
   renderer.setPixelRatio(gfx.ratio);
   renderer.setSize(innerWidth, innerHeight, false);
 }
@@ -241,8 +244,8 @@ function setGraphics(mode) {
   store.set('sidehit.gfx', gfx.mode);
   gfx.slow = 0;
   // Auto on a phone starts without shadows at a moderate resolution, then adapts
-  setShadows(gfx.mode === 'high' || (gfx.mode === 'auto' && !touch));
-  setRatio(gfx.mode === 'low' ? 0.75 : gfx.mode === 'auto' ? Math.min(1, MAX_RATIO) : MAX_RATIO);
+  setShadows(gfx.mode !== 'low');
+  setRatio(gfx.mode === 'low' ? (touch ? 1 : 0.75) : gfx.mode === 'auto' ? Math.min(touch ? 1.5 : 1.25, MAX_RATIO) : MAX_RATIO);
   gfx.drops = gfx.good = 0;
   sparkle.value = gfx.mode === 'low' ? 0 : (SKY[app.map && app.map.sky] || SKY.bluebird).glint;
   $('b-gfx').textContent = 'Graphics: ' + gfx.mode[0].toUpperCase() + gfx.mode.slice(1);
@@ -259,11 +262,11 @@ function autoQuality(dt) {
     // far too slow: drop shadows, sparkle and resolution in one go
     if (sun.castShadow) setShadows(false);
     sparkle.value = 0;
-    if (gfx.ratio > 0.7) setRatio(0.7); else if (gfx.ratio > 0.6) setRatio(0.6);
+    if (gfx.ratio > 1) setRatio(1); else setRatio(gfx.ratio - 0.15);
     gfx.good = 0; gfx.drops = 9;
   } else if (fps < 50) {
     gfx.good = 0; gfx.drops++;
-    if (sun.castShadow) setShadows(false); else if (gfx.ratio > 0.7) setRatio(gfx.ratio - 0.15);
+    if (sun.castShadow) setShadows(false); else setRatio(gfx.ratio - 0.15);
   } else if (fps > 57 && gfx.ratio < MAX_RATIO && gfx.drops < 3) {
     // every resize costs a hitch, so only climb back after a long smooth spell
     if (++gfx.good >= 6) { gfx.good = 0; setRatio(gfx.ratio + 0.1); }
@@ -709,6 +712,15 @@ function updateRider(dt) {
   vis.press = damp(vis.press, onSnow ? p.pressLocal : p.rail && Math.abs(inp.pitch) > 0.5 ? Math.sign(inp.pitch) : 0, 10, dt);
   rider.body.rotation.x = vis.press * 0.3;
   rider.body.position.y = -0.8 + Math.abs(Math.sin(vis.press * 0.3)) * 0.6;
+  blob.visible = !sun.castShadow && app.mode !== 'custom';
+  if (blob.visible) {
+    const gy = app.terrain.height(p.pos.x, p.pos.z), gap = Math.max(p.pos.y - gy, 0);
+    app.terrain.normal(p.pos.x, p.pos.z, tmp);
+    blob.position.set(p.pos.x, gy + 0.06, p.pos.z);
+    blob.quaternion.setFromUnitVectors(tmp2.set(0, 0, 1), tmp);
+    blob.scale.setScalar(1 + gap * 0.12);
+    blob.material.opacity = 0.42 * clamp(1 - gap / 7, 0, 1);
+  }
   const sp = p.vel.length();
   p.lean = damp(p.lean || 0, onSnow && !p.press ? clamp(-p.yawRate * sp * 0.035, -0.6, 0.6) : 0, 6, dt);
   rider.leanG.rotation.z = p.lean;
