@@ -198,7 +198,7 @@ const store = {
 const ctl = { twin: false };   // control scheme: classic, or twin-stick (nose and tail)
 let look = sanitizeLook(store.get('sidehit.look', null));
 const rider = new Rider(look);
-rider.root.scale.setScalar(1.12);   // a touch larger than life so the rider reads clearly on a phone
+rider.root.scale.setScalar(1.05);   // a touch larger than life so the rider reads clearly on a phone
 rider.load('models/snowboarder/').catch(() => flash('Rider model failed to load', 'bad'));
 scene.add(rider.root);
 let flashTimer = 0;

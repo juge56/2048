@@ -1,5 +1,5 @@
-// The rider: a chunky, stylised snowboarder built from rounded shapes (big helmet and goggles, puffy
-// jacket, baggy pants, mittens) and posed every frame with two-bone IK. No model file is needed.
+// The rider: a snowboarder with realistic proportions built from rounded shapes (helmet and goggles,
+// hooded shell jacket that hangs over the hips, baggy pants, gloves) and posed every frame with two-bone IK. No model file is needed.
 // Local frame: +z is the nose of the board, +y is up, the rider's chest faces -x.
 import * as THREE from '../vendor/three.module.min.js';
 
@@ -8,9 +8,9 @@ const damp = (a, b, rate, dt) => a + (b - a) * (1 - Math.exp(-rate * dt));
 const UP = V(0, 1, 0);
 
 export const LOOK_OPTIONS = {
-  jacket: ['#5fae8b', '#a8324a', '#e8a13a', '#4d7fb3', '#12a5a0', '#ff3d7f', '#8a4fd8', '#d8dde6', '#2a2f3d'],
-  jacket2: ['#3d7d63', '#f07a2a', '#ffe14a', '#22c7e8', '#f2f4f7', '#1c1f28', '#ff3d7f'],
-  pants: ['#6b6f78', '#2a2d36', '#8a6a4a', '#3d5a80', '#d8dde6', '#4a5d3a', '#7a1f3d'],
+  jacket: ['#7fae98', '#a8324a', '#e8a13a', '#4d7fb3', '#12a5a0', '#ff3d7f', '#8a4fd8', '#d8dde6', '#2a2f3d'],
+  jacket2: ['#5a6068', '#3d7d63', '#f07a2a', '#ffe14a', '#22c7e8', '#f2f4f7', '#1c1f28', '#ff3d7f'],
+  pants: ['#4a4c54', '#2a2d36', '#6b6f78', '#8a6a4a', '#3d5a80', '#d8dde6', '#4a5d3a', '#7a1f3d'],
   helmet: ['#f2f4f7', '#1c1f28', '#4d7fb3', '#ff3d7f', '#ffc928', '#12a5a0'],
   lens: ['amber', 'blue', 'violet', 'silver', 'green'],
   board: ['#ff0d38', '#12a5a0', '#ffc928', '#1c1f28', '#f2f4f7', '#2f6fe0', '#8be04e'],
@@ -42,7 +42,7 @@ const GRAB_POSE = {
   roastbeef: { hand: -1, at: [0.16, 0.1, 0.0], lean: 0.6, free: [0.03, 0.45, 0.3], tilt: [0.05, 0.4, 0.2] },
 };
 
-const LEN = { thigh: 0.36, shin: 0.34, upper: 0.26, fore: 0.25, spine: 0.44 };
+const LEN = { thigh: 0.43, shin: 0.41, upper: 0.29, fore: 0.27, spine: 0.5 };
 
 // Deck and base as thin shaped sheets: rounded tips, sidecut, kicked nose and tail.
 function boardGeometry(drop, colour) {
@@ -135,20 +135,21 @@ export class Rider {
 
     // body parts, placed every frame by pose()
     this.p = {
-      hips: add(ball, m.pants), belly: add(ball, m.jacket), chest: add(ball, m.jacket), hem: add(new THREE.CylinderGeometry(1, 1.04, 1, 20), m.trim), hood: add(ball, m.trim),
-      thigh: [0, 1].map(() => add(tube(0.118, 0.13), m.pants)), shin: [0, 1].map(() => add(tube(0.14, 0.118), m.pants)), knee: [0, 1].map(() => add(ball, m.pants)),
-      upper: [0, 1].map(() => add(tube(0.085, 0.1), m.jacket)), fore: [0, 1].map(() => add(tube(0.092, 0.085), m.jacket)),
+      hips: add(ball, m.pants), belly: add(ball, m.jacket), chest: add(ball, m.jacket), hem: add(new THREE.CylinderGeometry(1, 1.06, 1, 20), m.jacket), hood: add(ball, m.jacket),
+      thigh: [0, 1].map(() => add(tube(0.103, 0.116), m.pants)), shin: [0, 1].map(() => add(tube(0.124, 0.103), m.pants)), knee: [0, 1].map(() => add(ball, m.pants)),
+      upper: [0, 1].map(() => add(tube(0.072, 0.086), m.jacket)), fore: [0, 1].map(() => add(tube(0.076, 0.072), m.jacket)),
       shoulder: [0, 1].map(() => add(ball, m.jacket)), elbow: [0, 1].map(() => add(ball, m.jacket)), cuff: [0, 1].map(() => add(ball, m.trim)), mitt: [0, 1].map(() => add(ball, m.mitt)),
     };
-    for (const k of this.p.knee) k.scale.setScalar(0.122);
-    for (const k of this.p.shoulder) k.scale.setScalar(0.106);
-    for (const k of this.p.elbow) k.scale.setScalar(0.088);
-    for (const k of this.p.cuff) k.scale.setScalar(0.094);
-    for (const k of this.p.mitt) k.scale.set(0.082, 0.095, 0.075);
+    for (const k of this.p.knee) k.scale.setScalar(0.107);
+    for (const k of this.p.shoulder) k.scale.setScalar(0.093);
+    for (const k of this.p.elbow) k.scale.setScalar(0.075);
+    for (const k of this.p.cuff) k.scale.setScalar(0.08);
+    for (const k of this.p.mitt) k.scale.set(0.062, 0.078, 0.056);
 
     // head: big round helmet, wrap-around goggles, a bit of face, a neck gaiter
     const head = (this.head = new THREE.Group());
     this.body.add(head);
+    head.scale.setScalar(0.8);
     add(ball, m.skin, head).scale.setScalar(0.158);
     const gaiter = add(new THREE.SphereGeometry(1, 20, 10, 0, Math.PI * 2, Math.PI * 0.6, Math.PI * 0.4), m.dark, head);
     gaiter.scale.setScalar(0.164);
@@ -255,7 +256,7 @@ export class Rider {
     this.body.rotation.set((t.pitch || 0) + tw[0] * a, tw[2] * a, tw[1] * a);
 
     // ---- stance: hips over the board, sinking as the knees bend; a long back that leans from the hips
-    const hip = v[0].set(0.01 - 0.12 * e + 0.02 * k, 0.83 - 0.24 * c - 0.12 * k - 0.3 * gr, 0.16 * w);
+    const hip = v[0].set(0.01 - 0.12 * e + 0.02 * k, 0.99 - 0.3 * c - 0.14 * k - 0.42 * gr, 0.16 * w);
     const riding = 0.08 + 0.2 * c + 0.5 * k + 0.24 * Math.max(-e, 0) - 0.05 * Math.max(e, 0);
     const lean = riding + (gp.lean - riding) * gr;
     const open = 0.4 + 0.3 * k + 0.6 * this.twist - 0.25 * gr;   // shoulders turned toward the nose
@@ -264,22 +265,22 @@ export class Rider {
     const across0 = v[5].set(Math.sin(open * 0.4), 0, Math.cos(open * 0.4)), across = v[6].set(Math.sin(open), 0, Math.cos(open));
     across0.addScaledVector(low, -across0.dot(low)).normalize();
     across.addScaledVector(high, -across.dot(high)).normalize();
-    this._blob(P.hips, hip, low, across0, 0.17, 0.15, 0.205);
-    this._blob(P.hem, v[7].copy(hip).addScaledVector(low, 0.02), low, across0, 0.195, 0.12, 0.235);
-    this._blob(P.belly, v[7].copy(hip).addScaledVector(low, 0.13), low, across0, 0.195, 0.2, 0.235);
-    this._blob(P.chest, v[7].copy(mid).addScaledVector(high, 0.09), high, across, 0.2, 0.2, 0.26);
+    this._blob(P.hips, hip, low, across0, 0.15, 0.15, 0.185);
+    this._blob(P.hem, v[7].copy(hip).addScaledVector(low, 0.03), low, across0, 0.172, 0.2, 0.212);
+    this._blob(P.belly, v[7].copy(hip).addScaledVector(low, 0.17), low, across0, 0.168, 0.22, 0.208);
+    this._blob(P.chest, v[7].copy(mid).addScaledVector(high, 0.11), high, across, 0.172, 0.21, 0.232);
     const backDir = v[8].crossVectors(high, across);   // out of the rider's back
-    this._blob(P.hood, v[7].copy(neck).addScaledVector(backDir, 0.11).addScaledVector(high, -0.02), high, across, 0.1, 0.1, 0.17);
+    this._blob(P.hood, v[7].copy(neck).addScaledVector(backDir, 0.11).addScaledVector(high, -0.02), high, across, 0.085, 0.1, 0.145);
 
     // head: stays fairly level and looks down the hill over the lead shoulder
     this.headYaw = damp(this.headYaw, open + 0.55 + 0.28 * this.lookTurn, 6, dt);
-    this.head.position.copy(neck).addScaledVector(high, 0.1).addScaledVector(UP, 0.1);
+    this.head.position.copy(neck).addScaledVector(high, 0.08).addScaledVector(UP, 0.085);
     this.head.rotation.set(0, this.headYaw, lean * 0.3, 'YXZ');
 
     // ---- legs: knees track out over the toes
     for (let i = 0; i < 2; i++) {
       const s = i ? -1 : 1;
-      const socket = v[9].copy(hip).addScaledVector(across0, s * 0.105).addScaledVector(low, -0.03);
+      const socket = v[9].copy(hip).addScaledVector(across0, s * 0.095).addScaledVector(low, -0.03);
       const ankle = v[10].set(0.02, 0.27, s * 0.26);
       const knee = this._ik(socket, ankle, LEN.thigh, LEN.shin, v[11].set(-1, 0.1, s * 0.5), v[12]);
       this._limb(P.thigh[i], socket, knee);
@@ -290,8 +291,8 @@ export class Rider {
     // ---- arms: relaxed at the sides; lifted and spread in the air; pulled in when spinning
     for (let i = 0; i < 2; i++) {
       const s = i ? -1 : 1;
-      const sh = v[9].copy(neck).addScaledVector(across, s * 0.215).addScaledVector(high, -0.07), hand = v[10];
-      hand.set(sh.x - 0.07 - 0.05 * air, sh.y - 0.36 + 0.3 * air, sh.z + s * (0.13 + 0.24 * air));
+      const sh = v[9].copy(neck).addScaledVector(across, s * 0.2).addScaledVector(high, -0.07), hand = v[10];
+      hand.set(sh.x - 0.07 - 0.05 * air, sh.y - 0.44 + 0.36 * air, sh.z + s * (0.13 + 0.24 * air));
       hand.y += 0.1 * Math.abs(e); hand.z += s * 0.08 * Math.abs(e);
       if (this.spin > 0.01) hand.lerp(v[11].set(sh.x - 0.2, sh.y - 0.15, sh.z - s * 0.1), 0.75 * this.spin);
       if (k > 0.01) hand.lerp(s > 0 ? v[11].set(hip.x - 0.3, hip.y + 0.06, hip.z + 0.14) : v[11].set(hip.x + 0.2, hip.y + 0.1, hip.z - 0.08), k);
@@ -310,7 +311,7 @@ export class Rider {
       P.shoulder[i].position.copy(sh);
       P.elbow[i].position.copy(elbow);
       P.cuff[i].position.copy(hand).lerp(elbow, 0.1);
-      P.mitt[i].position.copy(hand).addScaledVector(v[13].copy(hand).sub(elbow).normalize(), 0.06);
+      P.mitt[i].position.copy(hand).addScaledVector(v[13].copy(hand).sub(elbow).normalize(), 0.05);
     }
   }
 }
